@@ -49,7 +49,7 @@ main_loop
  ;
  restorescreen
  gosub draw_cursor
- gosub draw_hud
+ ; gosub draw_hud
  
  ;
  ; Countdown input delay
@@ -81,26 +81,16 @@ draw_game_list
  ; plotchars 'GALAGA'           0 10 8
  ; plotchars 'MS PAC-MAN'       0 10 10
  ; plotchars 'DEFENDER'         0 10 12
-  plotchars $6000 0 10 4
-  plotchars $6020 0 10 5
-  plotchars $6040 0 10 6
-  plotchars $6060 0 10 7
-  plotchars $6080 0 10 8
-  plotchars $60A0 0 10 9
-  plotchars $60C0 0 10 10
-  plotchars $60E0 0 10 11
+ plotchars $E800 0 10 4
+ plotchars $E820 0 10 5
+ plotchars $E840 0 10 6
+ plotchars $E860 0 10 7
+ plotchars $E880 0 10 8
+ plotchars $E8A0 0 10 9
+ plotchars $E8C0 0 10 10
+ plotchars $E8E0 0 10 11
 
  return
-
-draw_hud
- plotchars 'SD:' 1 10 12
- plotchars $6100 1 40 12
- plotchars 'P1:' 1 10 13
- plotchars $6110 1 40 13
- plotchars 'P2:' 1 10 14
- plotchars $6120 1 40 14
- return
-
 
 draw_cursor
  ;
@@ -144,18 +134,6 @@ select_game_end
  if selected_game > 127 then selected_game = 7
  return
 
-move_up
- ;
- ; This is no longer used but kept for compatibility
- ;
- return
-
-move_down
- ;
- ; This is no longer used but kept for compatibility
- ;
- return
-
 select_game
  ;
  ; Visual feedback: flash background briefly
@@ -178,7 +156,7 @@ flash_loop
  ; Wait for load to finish (poll $7FF0)
 wait_loop
  restorescreen
- gosub draw_hud
+ ; gosub draw_hud
  drawscreen
  asm
    lda $7FF0

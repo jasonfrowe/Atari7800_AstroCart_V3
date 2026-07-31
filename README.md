@@ -125,3 +125,44 @@ This document defines:
 For immediate implementation execution, use:
 
 `docs/V1_SPRINT0_CHECKLIST.md`
+
+---
+
+## 🎮 Menu System & B-SRAM ROM Switching
+
+The Multi-Cart V3 features an integrated menu system compiled with 7800basic (`menu/menu.bas`) that enables seamless switching between ROMs stored in FPGA Block RAM (B-SRAM) and SD storage.
+
+### How B-SRAM ROM Switching Works:
+
+```
++-----------------------------------------------------------------------------------+
+| 1. Atari 7800 6502 CPU                                                           |
+|    - Displays 7800basic Menu application from initial B-SRAM ($4000-$FFFF)       |
+|    - User selects game with Joystick (Up/Down) and presses Fire button            |
+|    - Writes game selection to FPGA trigger register: $2200 = selected_game | 0x80 |
++-----------------------------------------------------------------------------------+
+                                         |
+                                         v
++-----------------------------------------------------------------------------------+
+| 2. Tang Nano 9K FPGA & Hazard5 Softcore                                          |
+|    - Detects write to $2200 (Bit 7 = 1 signals ROM load request)                  |
+|    - Hazard5 RISC-V softcore fetches requested ROM data from SD card / Flash      |
+|    - Streams ROM payload directly into Dual-Port Cartridge B-SRAM                  |
++-----------------------------------------------------------------------------------+
+                                         |
+                                         v
++-----------------------------------------------------------------------------------+
+| 3. Handover & Reset Execution                                                     |
+|    - 6502 CPU polls status register at $7FF0 until bit 7 signals load complete     |
+|    - 6502 copies a 6-byte Zero-Page stub to ZP RAM ($80-$85):                    |
+|         sta $2200  ; Acknowledge handover ($A5)                                  |
+|         jmp ($FFFC) ; Jump to new game reset vector                              |
+|    - 6502 jumps to $80, acknowledging handover and launching selected ROM         |
++-----------------------------------------------------------------------------------+
+```
+
+### Handover Protocol Details:
+1. **Triggering Load**: The 7800 menu writes `selected_game + 128` to `$2200`. Bit 7 indicates an active load request.
+2. **Status Polling**: While B-SRAM is populated, the 6502 loops polling status register `$7FF0` (`lda $7FF0` / `bpl .keep_waiting`).
+3. **Zero-Page Handover Stub**: Once `$7FF0` returns negative (load complete), the 6502 copies a 6-byte stub into Zero-Page RAM `$80`, stores `#$A5` to `$2200` to acknowledge handover, and executes `jmp ($FFFC)` to launch the newly loaded ROM directly from B-SRAM.
+

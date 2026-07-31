@@ -176,7 +176,13 @@ Porting intent:
 
 1. Reuse proven cart bus ownership and mapper behavior from V2.
 2. Do not reuse PSRAM timing assumptions or memory-latency coupling.
-3. Keep V3 BSRAM architecture as the storage backend.
+3. Keep V3 BSRAM architecture as the storage backend with dynamic menu-to-ROM handover via Zero-Page stub ($80-$85) and $7FF0 status polling.
+
+Menu System & B-SRAM ROM Handover Architecture:
+- **Menu Core**: Built with 7800basic (`menu/menu.bas`).
+- **Load Trigger**: Menu writes `selected_game + 128` to `$2200`.
+- **Status Register**: 6502 polls `$7FF0` until Bit 7 signals ROM payload streaming into B-SRAM is complete.
+- **Handover Execution**: 6502 copies 6-byte stub to ZP `$80` (`sta $2200` ; `jmp ($FFFC)`), writes `#$A5` to `$2200` to acknowledge, and jumps to `$80` to launch the newly loaded ROM from B-SRAM.
 
 Priority extraction order from V2:
 

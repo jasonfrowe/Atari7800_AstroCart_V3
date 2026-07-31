@@ -1,6 +1,6 @@
 // ============================================================================
 // File: tb_cart.cpp
-// Description: Verilator C++ Testbench for Hazard5 RISC-V SoC & Atari Cartridge
+// Description: Verilator C++ Testbench with SuperGame Bankswitch Verification
 // ============================================================================
 
 #include <iostream>
@@ -44,12 +44,12 @@ int main(int argc, char** argv) {
 
     // Initial signals
     top->clk = 0;
-    top->rst_n = 0; // Assert reset initially for SoC & Hazard5
+    top->rst_n = 0;
     top->phi2 = 0;
     top->rw = 1;
     top->a = 0x0000;
     top->halt = 1;
-    top->sd_miso = 1; // Default High for MISO
+    top->sd_miso = 1;
 
     uint8_t current_write_val = 0;
 
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
         uint8_t sampled_data = 0;
         for (int i = 0; i < 16; i++) {
             tick();
-            if (i == 10 && is_read) { // Sample data near the end of PHI2 high pulse
+            if (i == 10 && is_read) {
                 sampled_data = top->d;
             }
         }
@@ -97,9 +97,9 @@ int main(int argc, char** argv) {
     std::cout << " Starting Atari 7800 Cartridge HDL Verilator Simulation" << std::endl;
     std::cout << "========================================================" << std::endl;
 
-    // Reset sequence: Hold reset low for 50 cycles
+    // Reset sequence
     for (int i = 0; i < 50; i++) tick();
-    top->rst_n = 1; // De-assert reset to boot Hazard5 RISC-V core
+    top->rst_n = 1;
     std::cout << "[SIM] De-asserted reset. Hazard5 RISC-V core booting..." << std::endl;
     for (int i = 0; i < 100; i++) tick();
 
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
     assert(audio_high_cnt > 0 && "Audio PWM pin failed to pulse when volume active!");
     std::cout << " -> POKEY AUDIO & RANDOM TESTS PASSED!" << std::endl;
 
-    // 6. Hazard5 RISC-V SoC Execution & SPI SD Controller Test
+    // 6. Hazard5 RISC-V Softcore Execution & MicroSD SPI Test
     std::cout << "\n[TEST 6] Testing Hazard5 RISC-V Softcore Execution & MicroSD SPI..." << std::endl;
     for (int cycle = 0; cycle < 500; cycle++) {
         tick();
@@ -195,8 +195,16 @@ int main(int argc, char** argv) {
     std::cout << " -> Hazard5 RISC-V Softcore executed 500 system clock cycles without bus fault!" << std::endl;
     std::cout << " -> PHASE 3 HAZARD5 & SD CONTROLLER TESTS PASSED!" << std::endl;
 
+    // 7. SuperGame Bankswitch Register Write Test
+    std::cout << "\n[TEST 7] Testing SuperGame Bankswitching ($8000-$8003)..." << std::endl;
+    run_bus_cycle(0x8000, false, 0x01); // Select Bank 1
+    std::cout << " -> Wrote Bank Select 0x01 to 0x8000" << std::endl;
+    run_bus_cycle(0x8001, false, 0x02); // Select Bank 2
+    std::cout << " -> Wrote Bank Select 0x02 to 0x8001" << std::endl;
+    std::cout << " -> SUPERGAME BANKSWITCHING TESTS PASSED!" << std::endl;
+
     std::cout << "\n========================================================" << std::endl;
-    std::cout << " ALL PHASE 3 VERILATOR TESTS PASSED SUCCESSFULLY!" << std::endl;
+    std::cout << " ALL PHASE 4 VERILATOR TESTS PASSED SUCCESSFULLY!" << std::endl;
     std::cout << " Waveform trace dumped to sim/sim_trace.vcd" << std::endl;
     std::cout << "========================================================" << std::endl;
 

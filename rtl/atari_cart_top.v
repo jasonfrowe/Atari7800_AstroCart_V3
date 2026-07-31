@@ -1,6 +1,6 @@
 // ============================================================================
 // Module: atari_cart_top
-// Description: Atari 7800 Multi-Cart Top Level HDL with Hazard5 RISC-V Softcore
+// Description: Atari 7800 Multi-Cart Top Level HDL with SuperGame Bankswitching
 // Target: Sipeed Tang Nano 9K (Gowin GW1NR-9)
 // ============================================================================
 
@@ -66,9 +66,7 @@ module atari_cart_top #(
     // Hazard5 RISC-V SoC Softcore Subsystem
     // ------------------------------------------------------------------------
     wire        pokey_enable;
-    /* verilator lint_off UNUSEDSIGNAL */
     wire [3:0]  mapper_type;
-    /* verilator lint_on UNUSEDSIGNAL */
     wire        cart_ram_we;
     wire [15:0] cart_ram_addr;
     wire [7:0]  cart_ram_wdata;
@@ -91,12 +89,24 @@ module atari_cart_top #(
 
     // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
-    // - Cartridge Space: $4000-$FFFF
-    // - POKEY Registers: $4000-$400F (16 Bytes, mapped when POKEY enabled)
     // ------------------------------------------------------------------------
     wire is_cart_addr  = (a_sync >= 16'h4000);
     wire is_pokey_addr = (a_sync[15:4] == 12'h400); // $4000 - $400F
-    wire [15:0] rom_addr = a_sync - 16'h4000;
+
+    // SuperGame Bankswitch Mapper Module
+    wire [18:0] phys_rom_addr;
+
+    mapper_supergame u_mapper (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .phi2_rise      (phi2_rise),
+        .cs             (is_cart_addr),
+        .rw             (rw_is_read),
+        .addr           (a_sync),
+        .din            (d_in_sync),
+        .mapper_type    (mapper_type),
+        .phys_rom_addr  (phys_rom_addr)
+    );
 
     // ------------------------------------------------------------------------
     // Cartridge Dual-Port RAM (Read by 7800 Bus, Written by Hazard5 Loader)
@@ -113,7 +123,7 @@ module atari_cart_top #(
     // Port A: Read by Atari 7800 Bus
     always @(posedge clk) begin
         if (is_cart_addr) begin
-            rom_data_out <= rom_mem[rom_addr[15:0]];
+            rom_data_out <= rom_mem[phys_rom_addr[15:0]];
         end
     end
 

@@ -20,8 +20,8 @@ $(TARGET).bin: $(TARGET).elf
 	$(RISCV_OBJCOPY) -O binary $(TARGET).elf $(TARGET).bin
 
 $(TARGET).hex: $(TARGET).bin
-	$(PYTHON) -c "import sys; data=open('firmware.bin','rb').read(); [print(f'{b:02x}') for b in data]" > $(TARGET).hex
-	@echo "==> RISC-V Firmware binary compiled successfully ($$(wc -l < $(TARGET).hex) bytes)"
+	$(PYTHON) -c "import struct; data=open('firmware.bin','rb').read(); data += b'\x00'*(8192-len(data)); words=[struct.unpack('<I', data[i:i+4])[0] for i in range(0,8192,4)]; [print(f'{w:08x}') for w in words]" > $(TARGET).hex
+	@echo "==> RISC-V Firmware hex generated successfully ($$(wc -l < $(TARGET).hex) 32-bit words)"
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).bin $(TARGET).hex

@@ -1,20 +1,16 @@
 // ============================================================================
 // Module: atari_cart_top
-// Description: Atari 7800 Multi-Cart Top Level HDL with SuperGame Bankswitching
+// Description: Atari 7800 Multi-Cart Top Level HDL with Full Write Passthrough
 // Target: Sipeed Tang Nano 9K (Gowin GW1NR-9)
 // ============================================================================
 
 `default_nettype none
 
 module atari_cart_top #(
-    parameter C_INIT_FILE = "astrowing.hex",
     parameter FW_INIT_FILE = "firmware.hex"
 )(
     // System Clock & Resets
     input  wire        clk,          // 27 MHz onboard clock
-    /* verilator lint_off UNUSEDSIGNAL */
-    input  wire        rst_n,        // Active low reset
-    /* verilator lint_on UNUSEDSIGNAL */
 
     // Atari 7800 Bus Pins (via SN74LVC level shifters per PINS.md)
     input  wire        phi2,         // Atari CPU Phase 2 clock (~1.79 MHz)
@@ -44,32 +40,63 @@ module atari_cart_top #(
 );
 
     // ------------------------------------------------------------------------
-    // Synchronizers for Atari 7800 Signals (27MHz System Clock Domain)
+    // Internal Power-On Reset (POR) Generator
+    // Holds rst_n Low for ~4,096 cycles (~151 us) after FPGA bitstream boot,
+    // then smoothly releases rst_n to High continuously.
     // ------------------------------------------------------------------------
-    reg [2:0] phi2_sync;
-    reg [2:0] rw_sync;
-    reg [15:0] a_sync;
-    reg [7:0] d_in_sync;
+    reg [11:0] por_counter = 12'd0;
+    reg        rst_n = 1'b0;
 
     always @(posedge clk) begin
-        phi2_sync <= {phi2_sync[1:0], phi2};
-        rw_sync   <= {rw_sync[1:0], rw};
-        a_sync    <= a;
-        d_in_sync <= d;
+        if (por_counter < 12'd4095) begin
+            por_counter <= por_counter + 1'b1;
+            rst_n       <= 1'b0;
+        end else begin
+            rst_n       <= 1'b1;
+        end
     end
 
-    wire phi2_high  = phi2_sync[1];
-    wire phi2_rise  = (phi2_sync[2:1] == 2'b01);
-    wire rw_is_read = rw_sync[1];
+    // ------------------------------------------------------------------------
+    // Noise-Filtered Synchronizers for Atari 7800 Signals (27MHz System Clock)
+    // ------------------------------------------------------------------------
+    reg [3:0] phi2_pipe;
+    reg [2:0] rw_pipe;
+    reg [15:0] a_sync;
+    reg [7:0] d_in_sync;
+    reg       phi2_clean;
+
+    always @(posedge clk) begin
+        phi2_pipe <= {phi2_pipe[2:0], phi2};
+        rw_pipe   <= {rw_pipe[1:0], rw};
+        a_sync    <= a;
+        d_in_sync <= d;
+
+        // 3-Sample Majority Filter on PHI2 clock to eliminate level-shifter ringing
+        if (phi2_pipe[3:1] == 3'b111)
+            phi2_clean <= 1'b1;
+        else if (phi2_pipe[3:1] == 3'b000)
+            phi2_clean <= 1'b0;
+    end
+
+    reg phi2_clean_prev;
+    always @(posedge clk) begin
+        phi2_clean_prev <= phi2_clean;
+    end
+
+    wire phi2_high  = phi2_clean;
+    wire phi2_rise  = (phi2_clean && !phi2_clean_prev);
+    wire rw_is_read = rw_pipe[1];
 
     // ------------------------------------------------------------------------
     // Hazard5 RISC-V SoC Softcore Subsystem
     // ------------------------------------------------------------------------
     wire        pokey_enable;
     wire [3:0]  mapper_type;
+    /* verilator lint_off UNUSEDSIGNAL */
     wire        cart_ram_we;
     wire [15:0] cart_ram_addr;
     wire [7:0]  cart_ram_wdata;
+    /* verilator lint_on UNUSEDSIGNAL */
 
     hazard5_soc #(
         .FIRMWARE_HEX (FW_INIT_FILE)
@@ -109,30 +136,37 @@ module atari_cart_top #(
     );
 
     // ------------------------------------------------------------------------
-    // Cartridge Dual-Port RAM (Read by 7800 Bus, Written by Hazard5 Loader)
+    // Power-On Default Cartridge Memory (24x 2KB Gowin BSRAM Primitives)
     // ------------------------------------------------------------------------
-    reg [7:0] rom_mem [0:49151];
-    reg [7:0] rom_data_out;
+    wire [7:0] chunk_rdata [0:23];
 
-    initial begin
-        if (C_INIT_FILE != "") begin
-            $readmemh(C_INIT_FILE, rom_mem);
-        end
-    end
+    rom_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_04.hex")) u_rom_04 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[4]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_05.hex")) u_rom_05 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[5]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_06.hex")) u_rom_06 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[6]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_07.hex")) u_rom_07 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[7]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_08.hex")) u_rom_08 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[8]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_09.hex")) u_rom_09 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[9]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_10.hex")) u_rom_10 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[10]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_11.hex")) u_rom_11 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[11]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_12.hex")) u_rom_12 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[12]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_13.hex")) u_rom_13 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[13]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_14.hex")) u_rom_14 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[14]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_15.hex")) u_rom_15 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[15]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_16.hex")) u_rom_16 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[16]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_17.hex")) u_rom_17 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[17]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_18.hex")) u_rom_18 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[18]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_19.hex")) u_rom_19 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[19]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_20.hex")) u_rom_20 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[20]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_21.hex")) u_rom_21 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[21]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]));
+    rom_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]));
 
-    // Port A: Read by Atari 7800 Bus
-    always @(posedge clk) begin
-        if (is_cart_addr) begin
-            rom_data_out <= rom_mem[phys_rom_addr[15:0]];
-        end
-    end
-
-    // Port B: Write by Hazard5 RISC-V Loader
-    always @(posedge clk) begin
-        if (cart_ram_we && cart_ram_addr < 16'hC000) begin
-            rom_mem[cart_ram_addr] <= cart_ram_wdata;
-        end
-    end
+    wire [4:0] rom_chunk_sel = phys_rom_addr[15:11];
+    wire [7:0] rom_data_out = (rom_chunk_sel < 5'd24) ? chunk_rdata[rom_chunk_sel] : 8'hFF;
 
     // ------------------------------------------------------------------------
     // POKEY Sound Synthesizer Core Integration
@@ -161,19 +195,28 @@ module atari_cart_top #(
     );
 
     // ------------------------------------------------------------------------
-    // Dynamic Data Bus Output Selection & Buffer Controls
+    // Dynamic Data Bus Output Selection & Level Shifter Controls (U3 SN74LVC245)
     // ------------------------------------------------------------------------
     wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // $400E (RANDOM register)
-    wire drive_pokey = pokey_enable && is_pokey_addr && is_pokey_read_reg && rw_is_read && phi2_high;
-    wire drive_rom   = is_cart_addr && (!is_pokey_addr || !pokey_enable || !is_pokey_read_reg) && rw_is_read && phi2_high;
-    wire drive_bus   = drive_pokey || drive_rom;
 
+    // Hold the transceiver enabled continuously so write data is always visible
+    // to the FPGA, and turn the bus around based on the decoded access type.
+    wire is_cart_read  = is_cart_addr && rw_is_read;
+    wire is_cart_write = is_cart_addr && !rw_is_read;
+
+    // U3 Buffer Direction (U3_DIR): 1 = FPGA->Atari (Read), 0 = Atari->FPGA (Write/Idle)
+    assign buf_dir = is_cart_read;
+
+    // U3 Buffer Enable (U3_OE): always active so the FPGA can sample console writes.
+    assign buf_oe  = 1'b0;
+
+    // FPGA Internal Data Bus Drive Logic
+    wire drive_pokey = pokey_enable && is_pokey_addr && is_pokey_read_reg && rw_is_read;
     wire [7:0] bus_data_out = drive_pokey ? pokey_dout : rom_data_out;
 
-    assign d       = drive_bus ? bus_data_out : 8'hZZ;
-    assign buf_dir = drive_bus;          // 1 = FPGA driving Atari
-    assign buf_oe  = ~drive_bus;         // 0 = Active output enable
-    assign irq     = 1'bZ;
+    // Drive output byte when reading; Tri-State internal FPGA pins when Atari is writing
+    assign d   = (buf_dir == 1'b1) ? bus_data_out : 8'hZZ;
+    assign irq = 1'bZ;
 
     // ------------------------------------------------------------------------
     // Diagnostic LEDs
@@ -184,7 +227,7 @@ module atari_cart_top #(
             activity_cnt <= activity_cnt + 1'b1;
     end
 
-    assign led = ~{activity_cnt[23:19], drive_bus};
+    assign led = ~{activity_cnt[23:19], is_cart_read};
 
 endmodule
 `default_nettype wire

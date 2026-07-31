@@ -1,0 +1,16 @@
+# Minimal reset-vector replay example.
+# Expected bytes are auto-derived from astrowing.hex.
+
+0xFFFC R 0x00 0 ?
+0xFFFD R 0x00 0 ?
+0xC000 R 0x00 0 ?
+0xC001 R 0x00 0 ?
+0xC002 R 0x00 0 ?
+0xC003 R 0x00 0 ?
+
+# Example write visibility checks
+0x4001 W 0x3F 0 ?
+0x8000 W 0x03 0 ?
+
+# Example MARIA DMA read visibility
+0x8000 R 0x00 1 ?

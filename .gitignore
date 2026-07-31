@@ -31,3 +31,17 @@ gowin_rec.tmp
 __pycache__/
 *.pyc
 *.pyo
+
+# 7800basic build outputs
+menu/*.a78
+menu/*.bin
+menu/*.asm
+menu/*.sym
+menu/*.list.txt
+menu/*.dbg
+menu/*.7800
+menu/menu.bas.symbol.txt
+menu/html/7800basic.html
+menu/*.h
+menu/*.bak
+menu/*.cfg

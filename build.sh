@@ -43,17 +43,29 @@ run_gowin_synthesis() {
     fi
 
     # Ensure memory hex files exist
-    make -C sim astrowing.hex
+    make -C sim rom_chunk_00.hex
     make -C firmware
 
-    cp sim/astrowing.hex "$PROJECT_DIR/astrowing.hex"
+    # Copy memory initialization files to all potential working directories
+    mkdir -p impl/gwsynthesis "$GOWIN_IDE/impl/gwsynthesis" "$GOWIN_IDE/impl/pnr"
+    cp sim/rom_chunk_*.hex "$PROJECT_DIR/"
     cp firmware/firmware.hex "$PROJECT_DIR/firmware.hex"
+
+    cp sim/rom_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp firmware/firmware.hex "$PROJECT_DIR/impl/gwsynthesis/firmware.hex"
+
+    cp sim/rom_chunk_*.hex "$GOWIN_IDE/"
+    cp firmware/firmware.hex "$GOWIN_IDE/firmware.hex"
+
+    cp sim/rom_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp firmware/firmware.hex "$GOWIN_IDE/impl/gwsynthesis/firmware.hex"
 
     BUILD_TCL="$PROJECT_DIR/build.tcl"
     cat > "$BUILD_TCL" << EOF
 # Gowin IDE Synthesis TCL Script for Atari 7800 Multi-Cart V3
 set_device GW1NR-LV9QN88PC6/I5 -name GW1NR-9C
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top.v"
+add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
 add_file -type verilog "$PROJECT_DIR/rtl/spi_sd.v"
@@ -74,8 +86,6 @@ add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_shift_barrel.
 add_file -type cst "$PROJECT_DIR/atari.cst"
 set_option -top_module atari_cart_top
 set_option -verilog_std sysv2017
-set_option -param C_INIT_FILE="$PROJECT_DIR/astrowing.hex"
-set_option -param FW_INIT_FILE="$PROJECT_DIR/firmware.hex"
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1
 set_option -use_ready_as_gpio 1
@@ -90,13 +100,24 @@ EOF
     cd "$GOWIN_IDE"
     ./gw_sh "$BUILD_TCL"
     RESULT=$?
-    cd - > /dev/null
+    cd "$PROJECT_DIR"
 
-    if [ $RESULT -eq 0 ]; then
-        echo -e "${GREEN}✓ Gowin Synthesis & PnR Complete!${NC}"
-    else
+    if [ $RESULT -ne 0 ]; then
         echo -e "${RED}Gowin Synthesis failed with code $RESULT${NC}"
         exit $RESULT
+    fi
+
+    BITSTREAM_PATH="$GOWIN_IDE/impl/pnr/Atari7800_AstroCart_V3.fs"
+    if [ ! -f "$BITSTREAM_PATH" ]; then
+        BITSTREAM_PATH="$PROJECT_DIR/impl/pnr/Atari7800_AstroCart_V3.fs"
+    fi
+
+    if [ -f "$BITSTREAM_PATH" ]; then
+        cp "$BITSTREAM_PATH" "$PROJECT_DIR/Atari7800_AstroCart_V3.fs"
+        echo -e "${GREEN}✓ Bitstream copied to Atari7800_AstroCart_V3.fs${NC}"
+    else
+        echo -e "${RED}Error: Bitstream not found at $BITSTREAM_PATH${NC}"
+        exit 1
     fi
 }
 

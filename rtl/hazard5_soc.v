@@ -67,7 +67,7 @@ module hazard5_soc #(
 
     // ------------------------------------------------------------------------
     // Memory Map Address Decoder
-    // - 0x0000_0000 - 0x0000_3FFF: 16 KB Firmware RAM
+    // - 0x0000_0000 - 0x0000_1FFF: 8 KB Firmware RAM (2048 x 32-bit words)
     // - 0x4000_0000 - 0x4000_000F: SPI MicroSD Controller
     // - 0x8000_0000 - 0x8000_FFFF: Cartridge RAM Write Target
     // - 0xC000_0000 - 0xC000_000F: Cartridge CSRs
@@ -80,9 +80,9 @@ module hazard5_soc #(
     wire ahb_transfer = (cpu_htrans[1] == 1'b1); // HTRANS_NONSEQ or HTRANS_SEQ
 
     // ------------------------------------------------------------------------
-    // 16 KB Firmware Memory (Block RAM)
+    // 8 KB Firmware Memory (Block RAM)
     // ------------------------------------------------------------------------
-    reg [31:0] fw_ram [0:4095];
+    reg [31:0] fw_ram [0:2047];
     reg [31:0] fw_ram_rdata;
 
     initial begin
@@ -91,13 +91,15 @@ module hazard5_soc #(
         end
     end
 
+    wire fw_we = is_fw_ram && ahb_transfer && cpu_hwrite;
+    reg [10:0] fw_raddr;
+
     always @(posedge clk) begin
-        if (is_fw_ram && ahb_transfer) begin
-            if (cpu_hwrite) begin
-                fw_ram[cpu_haddr[13:2]] <= cpu_hwdata;
-            end
-            fw_ram_rdata <= fw_ram[cpu_haddr[13:2]];
+        if (fw_we) begin
+            fw_ram[cpu_haddr[12:2]] <= cpu_hwdata;
         end
+        fw_raddr <= cpu_haddr[12:2];
+        fw_ram_rdata <= fw_ram[fw_raddr];
     end
 
     // ------------------------------------------------------------------------

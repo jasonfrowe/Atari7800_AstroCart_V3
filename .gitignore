@@ -53,3 +53,6 @@ menu/html/7800basic.html
 menu/*.h
 menu/*.bak
 menu/*.cfg
+
+# Atari Cartridges (go get your own!)
+*.a78

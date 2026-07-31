@@ -22,48 +22,69 @@ module pokey_synth (
     output reg  [7:0] audio_out     // 8-bit combined PCM audio sample
 );
 
-    // ------------------------------------------------------------------------
-    // POKEY Register Set
-    // ------------------------------------------------------------------------
-    reg [7:0] audf [0:3];     // Channel 0..3 Frequency dividers
-    reg [7:0] audc [0:3];     // Channel 0..3 Control (Distortion & Volume)
-    /* verilator lint_off UNUSEDSIGNAL */
-    reg [7:0] audctl;         // Audio Master Control
-    reg [7:0] skctl;          // Serial/Key Control
-    /* verilator lint_on UNUSEDSIGNAL */
+    reg [7:0] audf [0:3];
+    reg [7:0] audc [0:3];
+    reg [7:0] audctl;
+    reg [7:0] skctl;
 
-    // ------------------------------------------------------------------------
-    // Polynomial Noise Generators (LFSRs)
-    // ------------------------------------------------------------------------
-    reg [16:0] lfsr17;
-    reg [8:0]  lfsr9;
-    reg [4:0]  lfsr5;
-    reg [3:0]  lfsr4;
+    reg [3:0]  poly4;
+    reg [4:0]  poly5;
+    reg [16:0] poly17;
+    reg [8:0]  poly9;
 
+    reg [15:0] counter [0:3];
+    reg [3:0]  chan_out;
+
+    reg [4:0] count_64k;
+    reg [6:0] count_15k;
+    reg tick_64khz;
+    reg tick_15khz;
+
+    reg channel_tick;
+    reg [5:0] mixed_audio;
+
+    integer i;
+    integer k;
+
+    wire p4_next  = !(poly4[3]  ^ poly4[2]);
+    wire p5_next  = !(poly5[4]  ^ poly5[2]);
+    wire p17_next = !(poly17[16] ^ poly17[4]);
+    wire p9_next  = !(poly9[8] ^ poly9[4]);
+
+    wire link_12   = audctl[4];
+    wire link_34   = audctl[3];
+    wire use_15khz = audctl[0];
     wire poly17_reset = (skctl[1:0] == 2'b00);
 
+    // Generate 64kHz and 15kHz clocks from POKEY 1.79MHz reference.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            lfsr17 <= 17'h12345;
-            lfsr9  <= 9'h155;
-            lfsr5  <= 5'h15;
-            lfsr4  <= 4'hA;
-        end else if (poly17_reset) begin
-            lfsr17 <= 17'h12345;
-            lfsr9  <= 9'h155;
-            lfsr5  <= 5'h15;
-            lfsr4  <= 4'hA;
-        end else if (phi2_rise) begin
-            lfsr17 <= {lfsr17[15:0], lfsr17[16] ^ lfsr17[13]};
-            lfsr9  <= {lfsr9[7:0],   lfsr9[8]   ^ lfsr9[4]};
-            lfsr5  <= {lfsr5[3:0],   lfsr5[4]   ^ lfsr5[2]};
-            lfsr4  <= {lfsr4[2:0],   lfsr4[3]   ^ lfsr4[2]};
+            count_64k  <= 5'd0;
+            count_15k  <= 7'd0;
+            tick_64khz <= 1'b0;
+            tick_15khz <= 1'b0;
+        end else begin
+            tick_64khz <= 1'b0;
+            tick_15khz <= 1'b0;
+            if (phi2_rise) begin
+                if (count_64k == 5'd27) begin
+                    count_64k  <= 5'd0;
+                    tick_64khz <= 1'b1;
+                end else begin
+                    count_64k <= count_64k + 1'b1;
+                end
+
+                if (count_15k == 7'd113) begin
+                    count_15k  <= 7'd0;
+                    tick_15khz <= 1'b1;
+                end else begin
+                    count_15k <= count_15k + 1'b1;
+                end
+            end
         end
     end
 
-    // ------------------------------------------------------------------------
-    // POKEY Register Writes & Reads
-    // ------------------------------------------------------------------------
+    // Register writes.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             audf[0] <= 8'h00; audc[0] <= 8'h00;
@@ -89,11 +110,75 @@ module pokey_synth (
         end
     end
 
-    // Read registers ($400E = RANDOM)
+    // POKEY noise generators run on 1.79MHz reference.
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            poly4  <= 4'b1011;
+            poly5  <= 5'b10101;
+            poly17 <= 17'b10101010101010101;
+            poly9  <= 9'b101010101;
+        end else if (poly17_reset) begin
+            poly4  <= 4'b1011;
+            poly5  <= 5'b10101;
+            poly17 <= 17'b10101010101010101;
+            poly9  <= 9'b101010101;
+        end else if (phi2_rise) begin
+            poly4  <= {poly4[2:0], p4_next};
+            poly5  <= {poly5[3:0], p5_next};
+            poly17 <= {poly17[15:0], p17_next};
+            poly9  <= {poly9[7:0], p9_next};
+        end
+    end
+
+    // Channel stepping with AUDCTL-controlled base clock selection.
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            chan_out    <= 4'b0000;
+            counter[0]  <= 16'h0000;
+            counter[1]  <= 16'h0000;
+            counter[2]  <= 16'h0000;
+            counter[3]  <= 16'h0000;
+        end else begin
+            for (i = 0; i < 4; i = i + 1) begin
+                channel_tick = use_15khz ? tick_15khz : tick_64khz;
+                if ((i == 0) && audctl[6]) channel_tick = phi2_rise;
+                if ((i == 2) && audctl[5]) channel_tick = phi2_rise;
+
+                if (channel_tick) begin
+                    if (!((i == 1 && link_12) || (i == 3 && link_34))) begin
+                        if (counter[i] == 16'h0000) begin
+                            if (i == 0 && link_12)
+                                counter[i] <= {audf[1], audf[0]};
+                            else if (i == 2 && link_34)
+                                counter[i] <= {audf[3], audf[2]};
+                            else
+                                counter[i] <= {8'h00, audf[i]};
+
+                            case (audc[i][7:5])
+                                3'b000: chan_out[i] <= poly17[16] && poly5[4];
+                                3'b001: chan_out[i] <= poly5[4];
+                                3'b010: chan_out[i] <= poly17[16] && poly5[4];
+                                3'b011: chan_out[i] <= poly5[4];
+                                3'b100: chan_out[i] <= poly17[16];
+                                3'b101: chan_out[i] <= ~chan_out[i];
+                                3'b110: chan_out[i] <= poly17[16];
+                                3'b111: chan_out[i] <= ~chan_out[i];
+                                default: chan_out[i] <= chan_out[i];
+                            endcase
+                        end else begin
+                            counter[i] <= counter[i] - 1'b1;
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    // Read registers ($x00E = RANDOM).
     always @(*) begin
         if (cs && rw) begin
             case (addr)
-                4'hE: dout = audctl[7] ? lfsr9[7:0] : lfsr17[15:8];
+                4'hE: dout = audctl[7] ? {poly9[7:0]} : {poly17[15:8]};
                 default: dout = 8'hFF;
             endcase
         end else begin
@@ -101,55 +186,20 @@ module pokey_synth (
         end
     end
 
-    // ------------------------------------------------------------------------
-    // 4-Channel Frequency Dividers & Tone Generators
-    // ------------------------------------------------------------------------
-    reg [7:0] div_cnt [0:3];
-    reg       chan_out [0:3];
-
-    genvar i;
-    generate
-        for (i = 0; i < 4; i = i + 1) begin : gen_chan
-            always @(posedge clk or negedge rst_n) begin
-                if (!rst_n) begin
-                    div_cnt[i]  <= 8'h00;
-                    chan_out[i] <= 1'b0;
-                end else if (phi2_rise) begin
-                    if (div_cnt[i] == 8'h00) begin
-                        div_cnt[i]  <= audf[i];
-                        chan_out[i] <= ~chan_out[i];
-                    end else begin
-                        div_cnt[i] <= div_cnt[i] - 1'b1;
-                    end
-                end
-            end
+    // 4-channel volume mix into 8-bit PWM level.
+    always @(*) begin
+        mixed_audio = 6'd0;
+        for (k = 0; k < 4; k = k + 1) begin
+            if (chan_out[k])
+                mixed_audio = mixed_audio + {2'b00, audc[k][3:0]};
         end
-    endgenerate
+    end
 
-    // ------------------------------------------------------------------------
-    // Channel Distortion / Poly Noise Selection & Mixer
-    // ------------------------------------------------------------------------
-    wire [7:0] raw_audio [0:3];
-
-    generate
-        for (i = 0; i < 4; i = i + 1) begin : gen_mix
-            wire volume_only = audc[i][5];   // Bit 5 = Volume only mode (force high)
-            wire [3:0] vol   = audc[i][3:0]; // Bits [3:0] = Volume level (0..15)
-
-            wire noise_gate = volume_only ? 1'b1 :
-                             (audc[i][7] ? lfsr5[0] : 1'b1) &
-                             (audc[i][6] ? chan_out[i] : lfsr4[0]);
-
-            assign raw_audio[i] = noise_gate ? {4'b0000, vol} : 8'h00;
-        end
-    endgenerate
-
-    // Combine 4 channels safely into 8-bit output
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             audio_out <= 8'h00;
         else
-            audio_out <= raw_audio[0] + raw_audio[1] + raw_audio[2] + raw_audio[3];
+            audio_out <= {mixed_audio, 2'b00};
     end
 
 endmodule

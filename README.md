@@ -166,3 +166,22 @@ The Multi-Cart V3 features an integrated menu system compiled with 7800basic (`m
 2. **Status Polling**: While B-SRAM is populated, the 6502 loops polling status register `$7FF0` (`lda $7FF0` / `bpl .keep_waiting`).
 3. **Zero-Page Handover Stub**: Once `$7FF0` returns negative (load complete), the 6502 copies a 6-byte stub into Zero-Page RAM `$80`, stores `#$A5` to `$2200` to acknowledge handover, and executes `jmp ($FFFC)` to launch the newly loaded ROM directly from B-SRAM.
 
+---
+
+## 🛠 Prototype Hardware Bodge & KiCad PCB Revision TODO
+
+### Active Prototype Bodge (V3 Board Modification):
+- **Purpose**: Enables FPGA-driven CPU halting (`HALT` Pin 2 control) to allow instant, transparent PSRAM ➔ B-SRAM bank switching without CPU bus contention.
+- **Modification Steps**:
+  1. Lifted **Pin 3 (Drain)** of transistor **Q3 (`BSS138`)** off its PCB pad (disconnecting Q3 from Cartridge Pin 31 `IRQ`).
+  2. Soldered a fine jumper wire from **Q3 Pin 3 (Drain)** to **Cartridge Pin 2 (`HALT`)** / **U5 Pin 19 (`B3`)**.
+- **FPGA Control**: FPGA Pin 83 (`irq`) controls Q3 Gate:
+  - `irq = 1'b1` ➔ Q3 turns ON ➔ pulls `HALT` (Pin 2) LOW (pauses 6502 CPU).
+  - `irq = 1'b0` ➔ Q3 turns OFF ➔ `HALT` floats HIGH (+5V) via motherboard pull-up (resumes 6502 CPU).
+  - Pin 83 constraint configured with `PULL_MODE=DOWN` in `atari.cst`.
+
+### KiCad Next Revision TODO (V3.1 / V4 PCB):
+- [ ] Connect **Q3 Drain** directly to **Cartridge Pin 2 (`HALT`)** in schematic and board layout.
+- [ ] Replace spare level-shifter pin **`UIP_1`** on U5 (`SN74LVC8T245`) with **`IRQ` (Cartridge Pin 31)** to restore independent cartridge IRQ drive capability alongside `HALT` control.
+
+

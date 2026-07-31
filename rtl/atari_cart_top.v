@@ -265,7 +265,7 @@ module atari_cart_top #(
 
     // Drive when this cart owns a read cycle.
     assign d   = (is_bus_read && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
-    assign irq = 1'bZ;
+    assign irq = 1'b0; // Drive 0V to Q3 Gate (Transistor OFF -> HALT floats HIGH via 5V motherboard pull-up)
 
     always @(posedge clk or negedge core_rst_n) begin
         if (!core_rst_n) begin

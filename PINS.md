@@ -174,3 +174,17 @@
 31	Pin_31	IRQ
 32	Pin_32	PHI2
 
+
+Q1/Q3  BSS138 (Open-Drain HALT Pull-Down Transistor)
+1	G	T_IRQ (FPGA Pin 83 - PULL_MODE=DOWN)
+2	S	GND
+3	D	HALT (Cartridge Pin 2 / U5 Pin 19) [Bodge Mod: Lifted from Pin 31 IRQ pad]
+
+U6 AP2112K-1.8
+1	VIN	+5V
+2	GND	GND
+3	EN	+5V
+4	NC	NC
+5	VOUT	+1V8
+
+

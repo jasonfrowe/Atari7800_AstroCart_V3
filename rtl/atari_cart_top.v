@@ -126,6 +126,7 @@ module atari_cart_top #(
     mapper_supergame u_mapper (
         .clk            (clk),
         .rst_n          (rst_n),
+        .phi2_high      (phi2_high),
         .phi2_rise      (phi2_rise),
         .cs             (is_cart_addr),
         .rw             (rw_is_read),
@@ -199,23 +200,22 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // $400E (RANDOM register)
 
-    // Hold the transceiver enabled continuously so write data is always visible
-    // to the FPGA, and turn the bus around based on the decoded access type.
+    // Decode read/write intent from synchronized Atari control signals.
     wire is_cart_read  = is_cart_addr && rw_is_read;
-    wire is_cart_write = is_cart_addr && !rw_is_read;
+    wire cart_bus_active = phi2_high && is_cart_addr;
 
     // U3 Buffer Direction (U3_DIR): 1 = FPGA->Atari (Read), 0 = Atari->FPGA (Write/Idle)
     assign buf_dir = is_cart_read;
 
-    // U3 Buffer Enable (U3_OE): always active so the FPGA can sample console writes.
-    assign buf_oe  = 1'b0;
+    // U3 Buffer Enable (U3_OE): only active during valid PHI2 cartridge windows.
+    assign buf_oe  = cart_bus_active ? 1'b0 : 1'b1;
 
     // FPGA Internal Data Bus Drive Logic
     wire drive_pokey = pokey_enable && is_pokey_addr && is_pokey_read_reg && rw_is_read;
     wire [7:0] bus_data_out = drive_pokey ? pokey_dout : rom_data_out;
 
-    // Drive output byte when reading; Tri-State internal FPGA pins when Atari is writing
-    assign d   = (buf_dir == 1'b1) ? bus_data_out : 8'hZZ;
+    // Drive only during active cartridge read windows to avoid low-phase contention.
+    assign d   = (cart_bus_active && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
     assign irq = 1'bZ;
 
     // ------------------------------------------------------------------------

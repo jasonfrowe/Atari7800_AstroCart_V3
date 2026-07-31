@@ -17,6 +17,12 @@ Scope guard:
 - [ ] S0-4 POKEY decode/read-path parity check
 - [ ] S0-5 Hardware M0 validation loop
 
+Current status note:
+
+1. S0-1 RTL patch applied in `rtl/atari_cart_top.v` (PHI2-windowed OE/data drive).
+2. S0-2 RTL patch applied in `rtl/mapper_supergame.v` (settled PHI2-high mapper write sampling).
+3. S0-1/S0-2 remain unchecked until required simulation gates pass.
+
 ## Required Gates Per Iteration
 
 1. `./build.sh --sim`

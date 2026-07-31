@@ -9,6 +9,7 @@
 module mapper_supergame (
     input  wire        clk,           // System clock
     input  wire        rst_n,         // Active low reset
+    input  wire        phi2_high,     // CPU clock high level
     input  wire        phi2_rise,     // CPU clock rise edge
 
     // Bus Interface
@@ -23,13 +24,25 @@ module mapper_supergame (
 );
 
     reg [4:0] bank_reg; // 5-bit bank selection (up to 32 16KB banks = 512KB)
+    reg       write_arm;
 
     // Bank register write latch ($8000-$8003)
+    // Arm on PHI2 rise, then sample one system clock later during PHI2-high
+    // so synchronized address/data have a full cycle to settle.
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             bank_reg <= 5'd0;
-        end else if (cs && !rw && phi2_rise && (addr >= 16'h8000) && (addr <= 16'h8003)) begin
-            bank_reg <= din[4:0];
+            write_arm <= 1'b0;
+        end else begin
+            if (phi2_rise)
+                write_arm <= 1'b1;
+            else if (!phi2_high)
+                write_arm <= 1'b0;
+
+            if (write_arm && phi2_high && cs && !rw && (addr >= 16'h8000) && (addr <= 16'h8003)) begin
+                bank_reg <= din[4:0];
+                write_arm <= 1'b0;
+            end
         end
     end
 

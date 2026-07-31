@@ -14,7 +14,7 @@ make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a
 Each non-empty, non-comment line in the trace file is:
 
 ```text
-<addr> <R|W> <write_data> <halt> <expected|?>
+<addr> <R|W> <write_data> <halt> <expected|?> [<IN|OUT>]
 ```
 
 Fields:
@@ -24,21 +24,22 @@ Fields:
 - `write_data`: Data byte driven by the console during write cycles. Use `0x00` for reads.
 - `halt`: `1` means MARIA owns the bus (`HALT` asserted on the cart edge), `0` means normal CPU bus ownership.
 - `expected|?`: Optional expected read byte. Use `?` to auto-derive expected data from the loaded ROM payload for cartridge-space reads.
+- `IN|OUT`: Optional explicit transceiver direction expectation. `OUT` means the cartridge should be driving the bus, `IN` means it should be listening.
 
 Example:
 
 ```text
 # Reset vector fetch and first opcode reads
-0xFFFC R 0x00 0 ?
-0xFFFD R 0x00 0 ?
-0xC000 R 0x00 0 ?
-0xC001 R 0x00 0 ?
+0xFFFC R 0x00 0 ? OUT
+0xFFFD R 0x00 0 ? OUT
+0xC000 R 0x00 0 ? OUT
+0xC001 R 0x00 0 ? OUT
 
 # Example POKEY write on the CPU bus
-0x4001 W 0x3F 0 ?
+0x4001 W 0x3F 0 ? IN
 
 # Example MARIA DMA read
-0x8000 R 0x00 1 ?
+0x8000 R 0x00 1 ? OUT
 ```
 
 What replay currently checks:
@@ -46,6 +47,7 @@ What replay currently checks:
 - Cartridge reads in `$4000-$FFFF` return the expected ROM byte.
 - Writes in cartridge space keep the transceiver in input mode.
 - Non-cartridge addresses do not put the cartridge in drive mode.
+- Optional `IN` / `OUT` tokens can pin down the expected transceiver direction per cycle.
 
 What replay does not yet do:
 
@@ -57,6 +59,6 @@ That makes this a good intermediate step: the emulator can supply real Sally/MAR
 
 The simulation harness also accepts `--rom-hex <file>` directly, and the Makefile passes `HEX_FILE` through to the testbench. That lets you swap between Astrowings, the menu ROM, and future fixed-ROM images without editing the harness.
 
-If your emulator can export bus cycles as CSV, TSV, or JSON Lines, use `sim/a7800_trace_to_replay.py` to map those logs into replay traces. The converter looks for common field names such as `addr`, `rw`, `data`, `halt`, and `expected_data`.
+If your emulator can export bus cycles as CSV, TSV, or JSON Lines, use `sim/a7800_trace_to_replay.py` to map those logs into replay traces. The converter looks for common field names such as `addr`, `rw`, `data`, `halt`, `expected_data`, and `drive_mode`.
 
 There is also a small fixture at `sim/traces/example_a7800_export.csv` that shows the expected CSV header and field naming.

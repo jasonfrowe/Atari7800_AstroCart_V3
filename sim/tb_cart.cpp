@@ -29,8 +29,22 @@ struct TraceCycle {
     bool halt;
     bool expect_read_data;
     uint8_t expected_data;
+    bool expect_drive_mode;
+    bool expect_drive_output;
     std::string source;
 };
+
+static bool parse_drive_mode_token(const std::string& token, bool& expect_output) {
+    if (token == "OUT" || token == "out" || token == "DRIVE" || token == "drive" || token == "1") {
+        expect_output = true;
+        return true;
+    }
+    if (token == "IN" || token == "in" || token == "LISTEN" || token == "listen" || token == "0") {
+        expect_output = false;
+        return true;
+    }
+    return false;
+}
 
 static std::vector<TraceCycle> load_trace_cycles(const std::string& trace_path) {
     std::ifstream trace_file(trace_path);
@@ -56,9 +70,12 @@ static std::vector<TraceCycle> load_trace_cycles(const std::string& trace_path) 
         std::string expect_str;
         if (!(iss >> addr_str >> rw_str >> write_str >> halt_str >> expect_str)) {
             std::cerr << "ERROR: Invalid trace line " << line_no
-                      << ". Expected: <addr> <R|W> <write_data> <halt> <expected|?>" << std::endl;
+                      << ". Expected: <addr> <R|W> <write_data> <halt> <expected|?> [<IN|OUT>]" << std::endl;
             std::exit(1);
         }
+
+        std::string drive_mode_str;
+        bool has_drive_mode = static_cast<bool>(iss >> drive_mode_str);
 
         TraceCycle cycle{};
         cycle.addr = static_cast<uint16_t>(std::stoul(addr_str, nullptr, 0));
@@ -67,6 +84,16 @@ static std::vector<TraceCycle> load_trace_cycles(const std::string& trace_path) 
         cycle.halt = (halt_str == "1" || halt_str == "H" || halt_str == "h");
         cycle.expect_read_data = (expect_str != "?");
         cycle.expected_data = cycle.expect_read_data ? static_cast<uint8_t>(std::stoul(expect_str, nullptr, 0)) : 0;
+        cycle.expect_drive_mode = false;
+        cycle.expect_drive_output = false;
+        if (has_drive_mode) {
+            if (!parse_drive_mode_token(drive_mode_str, cycle.expect_drive_output)) {
+                std::cerr << "ERROR: Invalid drive mode token '" << drive_mode_str << "' on line "
+                          << line_no << ". Expected IN or OUT." << std::endl;
+                std::exit(1);
+            }
+            cycle.expect_drive_mode = true;
+        }
         cycle.source = trace_path + ":" + std::to_string(line_no);
         cycles.push_back(cycle);
     }
@@ -81,10 +108,10 @@ static std::vector<TraceCycle> load_trace_cycles(const std::string& trace_path) 
 
 static void print_trace_usage() {
     std::cout << "Trace replay format:" << std::endl;
-    std::cout << "  <addr> <R|W> <write_data> <halt> <expected|?>" << std::endl;
+    std::cout << "  <addr> <R|W> <write_data> <halt> <expected|?> [<IN|OUT>]" << std::endl;
     std::cout << "Example:" << std::endl;
-    std::cout << "  0xFFFC R 0x00 0 ?" << std::endl;
-    std::cout << "  0x4000 W 0x3F 0 ?" << std::endl;
+    std::cout << "  0xFFFC R 0x00 0 ? OUT" << std::endl;
+    std::cout << "  0x4000 W 0x3F 0 ? IN" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -202,10 +229,25 @@ int main(int argc, char** argv) {
         std::cout << "\n[TRACE] Replaying " << cycles.size() << " bus cycles from external trace..." << std::endl;
         int read_mismatches = 0;
         int input_mode_violations = 0;
+        int drive_mode_mismatches = 0;
+        int maria_cycles = 0;
+        int cpu_cycles = 0;
 
         for (const auto& cycle : cycles) {
             top->halt = cycle.halt ? 0 : 1;
+            if (cycle.halt) maria_cycles++;
+            else cpu_cycles++;
             const uint8_t read_data = run_bus_cycle(cycle.addr, cycle.is_read, cycle.write_val);
+
+            if (cycle.expect_drive_mode) {
+                const bool observed_output = (top->buf_dir != 0);
+                if (observed_output != cycle.expect_drive_output) {
+                    std::cerr << "TRACE ERROR " << cycle.source << ": buf_dir was "
+                              << (observed_output ? "OUT" : "IN") << " expected "
+                              << (cycle.expect_drive_output ? "OUT" : "IN") << std::endl;
+                    drive_mode_mismatches++;
+                }
+            }
 
             if (cycle.addr < 0x4000) {
                 if (top->buf_dir != 0) {
@@ -234,6 +276,8 @@ int main(int argc, char** argv) {
 
         assert(read_mismatches == 0 && "Trace replay detected ROM read mismatches!");
         assert(input_mode_violations == 0 && "Trace replay detected bus direction violations!");
+        assert(drive_mode_mismatches == 0 && "Trace replay detected explicit drive-mode mismatches!");
+        std::cout << "[TRACE] CPU cycles: " << cpu_cycles << ", MARIA cycles: " << maria_cycles << std::endl;
         std::cout << "[TRACE] Replay passed with no bus or data mismatches." << std::endl;
     };
 

@@ -35,6 +35,7 @@ READ_BOOL_KEYS = ("is_read", "read")
 DATA_KEYS = ("data", "write_data", "din", "value")
 HALT_KEYS = ("halt", "maria_halt", "dma_halt")
 EXPECTED_KEYS = ("expected", "expected_data", "dout", "read_data")
+DRIVE_MODE_KEYS = ("drive_mode", "expect_drive", "expected_drive", "buf_dir", "direction_expect")
 
 
 def parse_args() -> argparse.Namespace:
@@ -147,7 +148,18 @@ def format_row(row: Dict[str, object]) -> str:
     expected_value = first_present(row, EXPECTED_KEYS)
     expected_token = "?" if expected_value in (None, "") else f"0x{parse_int(expected_value) & 0xFF:02X}"
 
-    return f"0x{parse_int(address) & 0xFFFF:04X} {'R' if is_read else 'W'} 0x{write_data:02X} {halt} {expected_token}"
+    drive_mode_value = first_present(row, DRIVE_MODE_KEYS)
+    drive_mode_token = ""
+    if drive_mode_value not in (None, ""):
+        text = str(drive_mode_value).strip().lower()
+        if text in ("1", "out", "drive", "output"):
+            drive_mode_token = " OUT"
+        elif text in ("0", "in", "listen", "input"):
+            drive_mode_token = " IN"
+        else:
+            raise ValueError(f"unsupported drive-mode token: {drive_mode_value!r}")
+
+    return f"0x{parse_int(address) & 0xFFFF:04X} {'R' if is_read else 'W'} 0x{write_data:02X} {halt} {expected_token}{drive_mode_token}"
 
 
 def main() -> int:

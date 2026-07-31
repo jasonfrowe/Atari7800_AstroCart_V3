@@ -182,6 +182,9 @@ EOF
     fi
 
     if [ -f "$BITSTREAM_PATH" ]; then
+        if [ -e "$PROJECT_DIR/Atari7800_AstroCart_V3.fs" ] && [ ! -w "$PROJECT_DIR/Atari7800_AstroCart_V3.fs" ]; then
+            chmod u+w "$PROJECT_DIR/Atari7800_AstroCart_V3.fs"
+        fi
         cp "$BITSTREAM_PATH" "$PROJECT_DIR/Atari7800_AstroCart_V3.fs"
         echo -e "${GREEN}✓ Bitstream copied to Atari7800_AstroCart_V3.fs${NC}"
     else

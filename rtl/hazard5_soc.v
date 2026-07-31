@@ -13,7 +13,8 @@ module hazard5_soc #(
     input  wire        rst_n,          // Active low reset
 
     // Cartridge Bus Control / Config CSRs
-    output reg         pokey_enable,   // 1 = POKEY active at $4000-$400F
+    output reg         pokey_enable,   // 1 = POKEY active at selected address window
+    output reg  [1:0]  pokey_addr_sel, // 0=$4000, 1=$0450, 2=$0800
     output reg  [3:0]  mapper_type,    // Bankswitch mapper selection
 
     // Cartridge RAM Write Bus (from RISC-V loader)
@@ -142,9 +143,11 @@ module hazard5_soc #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pokey_enable <= 1'b1;
+            pokey_addr_sel <= 2'b00;
             mapper_type  <= 4'h0;
         end else if (is_csr && ahb_transfer && cpu_hwrite) begin
             pokey_enable <= cpu_hwdata[0];
+            pokey_addr_sel <= cpu_hwdata[2:1];
             mapper_type  <= cpu_hwdata[7:4];
         end
     end
@@ -156,7 +159,7 @@ module hazard5_soc #(
         else if (is_spi_sd)
             cpu_hrdata = {24'h000000, spi_rdata};
         else if (is_csr)
-            cpu_hrdata = {24'h000000, mapper_type, 3'b000, pokey_enable};
+            cpu_hrdata = {24'h000000, mapper_type, 1'b0, pokey_addr_sel, pokey_enable};
         else
             cpu_hrdata = 32'h0000_0000;
     end

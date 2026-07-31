@@ -11,6 +11,35 @@ typedef unsigned int   uint32_t;
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 #define REG8(addr)  (*(volatile uint8_t  *)(addr))
 
+#define A78_HEADER_SIZE 128u
+
+#define A78_OFF_VERSION      0u
+#define A78_OFF_MAGIC        1u
+#define A78_OFF_ROM_SIZE     49u
+#define A78_OFF_CART_TYPE    53u
+#define A78_OFF_V4_MAPPER    64u
+#define A78_OFF_V4_AUDIO     66u
+
+#define CART_FLAG_POKEY_4000   (1u << 0)
+#define CART_FLAG_POKEY_450    (1u << 6)
+#define CART_FLAG_POKEY_440    (1u << 10)
+#define CART_FLAG_POKEY_800    (1u << 15)
+#define CART_FLAG_SUPERGAME    (1u << 1)
+
+#define V4_MAPPER_LINEAR       0u
+#define V4_MAPPER_SUPERGAME    1u
+
+#define V4_AUDIO_POKEY_MASK    0x0007u
+#define V4_AUDIO_POKEY_440     1u
+#define V4_AUDIO_POKEY_450     2u
+#define V4_AUDIO_POKEY_450_440 3u
+#define V4_AUDIO_POKEY_800     4u
+#define V4_AUDIO_POKEY_4000    5u
+
+#define POKEY_ADDR_4000        0u
+#define POKEY_ADDR_450         1u
+#define POKEY_ADDR_800         2u
+
 // Hardware Base Addresses
 #define SPI_BASE       0x40000000
 #define SPI_DATA       REG8(SPI_BASE + 0x00)
@@ -86,6 +115,14 @@ static int sd_read_sector(uint32_t sector, uint8_t *buf) {
     return 0;
 }
 
+static uint32_t read_be_u32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static uint16_t read_be_u16(const uint8_t *p) {
+    return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
 // A78 Header Parser & Loader
 int main(void) {
     uint8_t sector_buf[512];
@@ -96,32 +133,87 @@ int main(void) {
     // Read first sector containing A78 Cartridge Header
     sd_read_sector(0, sector_buf);
 
-    // Decode 128-byte A78 Header
-    uint32_t rom_bytes = ((sector_buf[48] << 24) | (sector_buf[49] << 16) |
-                          (sector_buf[50] << 8)  | sector_buf[51]) * 256;
+    // Decode 128-byte A78 Header per spec.
+    uint8_t  header_version = sector_buf[A78_OFF_VERSION];
+    uint32_t rom_bytes = read_be_u32(&sector_buf[A78_OFF_ROM_SIZE]);
     if (rom_bytes == 0) rom_bytes = 49152; // Default to 48KB
 
-    uint8_t pokey_present = sector_buf[53] & 0x01;
+    uint16_t cart_type = read_be_u16(&sector_buf[A78_OFF_CART_TYPE]);
+    uint8_t  v4_mapper = sector_buf[A78_OFF_V4_MAPPER];
+    uint16_t v4_audio  = read_be_u16(&sector_buf[A78_OFF_V4_AUDIO]);
+
+    uint8_t mapper_type = 0; // 0=Flat 48K, 1=SuperGame, 2=Flat 32K
+    if (header_version >= 4) {
+        if (v4_mapper == V4_MAPPER_SUPERGAME) {
+            mapper_type = 1;
+        } else if (v4_mapper == V4_MAPPER_LINEAR && rom_bytes <= 32768u) {
+            mapper_type = 2;
+        }
+    } else {
+        if (cart_type & CART_FLAG_SUPERGAME) {
+            mapper_type = 1;
+        } else if (rom_bytes <= 32768u) {
+            mapper_type = 2;
+        }
+    }
+
+    uint8_t pokey_present = 0;
+    uint8_t pokey_addr_sel = POKEY_ADDR_4000;
+    if (header_version >= 4) {
+        uint16_t pokey_mode = (v4_audio & V4_AUDIO_POKEY_MASK);
+        if (pokey_mode == V4_AUDIO_POKEY_4000) {
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_4000;
+        } else if (pokey_mode == V4_AUDIO_POKEY_450 || pokey_mode == V4_AUDIO_POKEY_450_440) {
+            // For combined @450+@440, use @450 (current RTL does not implement @440).
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_450;
+        } else if (pokey_mode == V4_AUDIO_POKEY_800) {
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_800;
+        } else if (pokey_mode == V4_AUDIO_POKEY_440) {
+            // Unsupported location in current RTL; leave disabled.
+            pokey_present = 0u;
+        }
+    } else {
+        if (cart_type & CART_FLAG_POKEY_4000) {
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_4000;
+        } else if (cart_type & CART_FLAG_POKEY_450) {
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_450;
+        } else if (cart_type & CART_FLAG_POKEY_800) {
+            pokey_present = 1u;
+            pokey_addr_sel = POKEY_ADDR_800;
+        } else if (cart_type & CART_FLAG_POKEY_440) {
+            // Unsupported location in current RTL; leave disabled.
+            pokey_present = 0u;
+        }
+    }
 
     // Stream ROM Payload (skipping 128-byte header) into FPGA Cartridge RAM
     volatile uint8_t *cart_ram = (volatile uint8_t *)CART_RAM_BASE;
 
-    // Copy remaining bytes of first sector
-    for (int i = 128; i < 512; i++) {
+    // Copy remaining bytes of first sector after 128-byte header.
+    uint32_t copied = 0;
+    for (uint32_t i = A78_HEADER_SIZE; i < 512u && copied < rom_bytes; i++) {
         *cart_ram++ = sector_buf[i];
+        copied++;
     }
 
-    // Read remaining sectors
-    uint32_t sectors_needed = (rom_bytes - (512 - 128) + 511) / 512;
-    for (uint32_t sec = 1; sec <= sectors_needed; sec++) {
+    // Read remaining sectors, copying exactly rom_bytes payload bytes.
+    for (uint32_t sec = 1; copied < rom_bytes; sec++) {
         sd_read_sector(sec, sector_buf);
-        for (int i = 0; i < 512; i++) {
+        for (uint32_t i = 0; i < 512u && copied < rom_bytes; i++) {
             *cart_ram++ = sector_buf[i];
+            copied++;
         }
     }
 
-    // Configure Cartridge CSR: enable POKEY if specified in A78 header
-    CART_CSR_CTRL = pokey_present ? 0x01 : 0x00;
+    // Configure Cartridge CSR: [7:4]=mapper_type, [2:1]=pokey_addr_sel, [0]=pokey_enable
+    CART_CSR_CTRL = ((uint32_t)(mapper_type & 0x0F) << 4)
+                  | ((uint32_t)(pokey_addr_sel & 0x03) << 1)
+                  | (uint32_t)(pokey_present & 0x01);
 
     while (1) {
         // Idle loop / Wait for user selection

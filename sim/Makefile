@@ -53,9 +53,12 @@ VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
 
 all: run
 
-rom_chunk_00.hex: $(A78_FILE) convert_a78_split.py convert_a78.py
-	@echo "==> Converting .a78 binary payload into 24x 2KB chunks..."
+$(HEX_FILE): $(A78_FILE) convert_a78.py
+	@echo "==> Converting .a78 payload into $(HEX_FILE)..."
 	$(PYTHON) convert_a78.py $(A78_FILE) $(HEX_FILE)
+
+rom_chunk_00.hex: $(A78_FILE) convert_a78_split.py $(HEX_FILE)
+	@echo "==> Converting .a78 binary payload into 24x 2KB chunks..."
 	$(PYTHON) convert_a78_split.py $(A78_FILE)
 
 $(FW_HEX): $(FW_DIR)/main.c $(FW_DIR)/crt0.S $(FW_DIR)/link.ld

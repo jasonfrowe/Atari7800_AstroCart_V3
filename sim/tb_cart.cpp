@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
     uint8_t reset_low  = run_bus_cycle(0xFFFC, true);
     uint8_t reset_high = run_bus_cycle(0xFFFD, true);
     uint16_t reset_vector = (reset_high << 8) | reset_low;
-    uint16_t expected_vector = (expected_rom[0xBFFD] << 8) | expected_rom[0xBFFC];
+    uint16_t expected_vector = (expected_rom_byte(0xFFFD) << 8) | expected_rom_byte(0xFFFC);
 
     std::cout << " -> Reset Vector Read: 0x" << std::hex << std::setw(4) << std::setfill('0') << reset_vector
               << " (Expected: 0x" << std::setw(4) << expected_vector << ")" << std::endl;
@@ -375,7 +375,7 @@ int main(int argc, char** argv) {
     int rom_mismatches = 0;
     for (uint32_t addr = 0x4000; addr <= 0xFFFF; addr += 0x0800) {
         uint8_t data = run_bus_cycle(addr, true);
-        uint8_t exp  = expected_rom[addr - 0x4000];
+        uint8_t exp  = expected_rom_byte(static_cast<uint16_t>(addr));
         if (data != exp) {
             std::cerr << "Mismatch at 0x" << std::hex << addr
                       << ": Got 0x" << (int)data << " Exp 0x" << (int)exp << std::endl;
@@ -405,12 +405,12 @@ int main(int argc, char** argv) {
     assert(top->buf_dir == 0 && "buf_dir should be 0 (Atari->FPGA) during Write cycle");
     assert(top->buf_oe == 0 && "buf_oe MUST be 0 (Active!) so Atari write bytes pass through U3 into FPGA!");
 
-    // Step C: Low Memory Read ($0080 Read) -> Outside Cart Space (buf_dir=0, U3 left in input mode)
+    // Step C: Low Memory Read ($0080 Read) -> Outside Cart space (buf_dir=0, U3 disabled)
     top->a = 0x0080; top->rw = 1; top->phi2 = 1;
     sync_settle();
     std::cout << " -> Step C ($0080 Read): buf_dir=" << (int)top->buf_dir << " buf_oe=" << (int)top->buf_oe << std::endl;
     assert(top->buf_dir == 0 && "buf_dir should be 0 outside Cart space");
-    assert(top->buf_oe == 0 && "buf_oe should remain 0 so console write cycles always pass through U3");
+    assert(top->buf_oe == 1 && "buf_oe should be 1 (tri-stated) outside PHI2 cartridge windows");
     std::cout << " -> PASSED!" << std::endl;
 
     // ------------------------------------------------------------------------
@@ -419,8 +419,13 @@ int main(int argc, char** argv) {
     std::cout << "\n[TEST 5] Simulating 6502 Execution Stream from 0x" << std::hex << reset_vector << "..." << std::endl;
     uint16_t pc = reset_vector;
     for (int step = 0; step < 16; step++) {
+        if (pc < 0x4000) {
+            std::cout << " -> PC entered non-cartridge space at 0x" << std::hex << pc
+                      << "; stopping opcode stream check for this image." << std::endl;
+            break;
+        }
         uint8_t op = run_bus_cycle(pc, true);
-        uint8_t exp = expected_rom[pc - 0x4000];
+        uint8_t exp = expected_rom_byte(pc);
         std::cout << " -> PC=0x" << std::hex << pc << " Opcode=0x" << (int)op
                   << " (Expected: 0x" << (int)exp << ")" << std::endl;
         assert(op == exp);
@@ -432,18 +437,38 @@ int main(int argc, char** argv) {
     // [TEST 6] POKEY Audio Core & RANDOM Register Write Passthrough Test
     // ------------------------------------------------------------------------
     std::cout << "\n[TEST 6] Testing POKEY Audio Core & RANDOM Register Write Passthrough..." << std::endl;
-    run_bus_cycle(0x400F, false, 0x03); // Enable POKEY audio & timers
-    run_bus_cycle(0x4000, false, 0xA0); // Set POKEY AUDF1 frequency
-    run_bus_cycle(0x4001, false, 0xAF); // Set POKEY AUDC1 volume & pure tone
+    const uint16_t pokey_candidates[3] = {0x4000, 0x0450, 0x0800};
+    uint16_t pokey_base = 0x4000;
+    uint8_t rnd1 = 0;
+    uint8_t rnd2 = 0;
+    uint8_t rnd3 = 0;
+    bool pokey_found = false;
 
-    uint8_t rnd1 = run_bus_cycle(0x400E, true);
-    for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
-    uint8_t rnd2 = run_bus_cycle(0x400E, true);
-    for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
-    uint8_t rnd3 = run_bus_cycle(0x400E, true);
+    for (uint16_t base : pokey_candidates) {
+        run_bus_cycle(static_cast<uint16_t>(base + 0x0F), false, 0x03); // Enable POKEY audio & timers
+        run_bus_cycle(static_cast<uint16_t>(base + 0x00), false, 0xA0); // Set POKEY AUDF1 frequency
+        run_bus_cycle(static_cast<uint16_t>(base + 0x01), false, 0xAF); // Set POKEY AUDC1 volume & pure tone
 
-    std::cout << " -> POKEY RANDOM Reads ($400E): 0x" << std::hex << (int)rnd1
+        uint8_t t1 = run_bus_cycle(static_cast<uint16_t>(base + 0x0E), true);
+        for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
+        uint8_t t2 = run_bus_cycle(static_cast<uint16_t>(base + 0x0E), true);
+        for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
+        uint8_t t3 = run_bus_cycle(static_cast<uint16_t>(base + 0x0E), true);
+
+        if (t1 != 0x00 && t1 != 0xFF && (t1 != t2 || t2 != t3)) {
+            pokey_base = base;
+            rnd1 = t1;
+            rnd2 = t2;
+            rnd3 = t3;
+            pokey_found = true;
+            break;
+        }
+    }
+
+    std::cout << " -> POKEY base 0x" << std::hex << pokey_base
+              << " RANDOM reads: 0x" << (int)rnd1
               << ", 0x" << (int)rnd2 << ", 0x" << (int)rnd3 << std::endl;
+    assert(pokey_found && "POKEY did not respond at any supported base ($4000/$0450/$0800)!");
     assert(rnd1 != 0x00 && rnd1 != 0xFF && "POKEY RANDOM returned invalid static byte!");
     assert((rnd1 != rnd2 || rnd2 != rnd3) && "POKEY RANDOM generator failed to evolve!");
 

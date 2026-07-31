@@ -7,15 +7,22 @@
 
 import sys
 
+from a78_header import parse_a78_header, payload_from_a78
+
 WINDOW_BYTES = 24 * 2048
 
 def convert_a78_split(input_a78):
     with open(input_a78, 'rb') as f:
         data = f.read()
 
-    # Skip 128-byte A78 header
-    rom_data = data[128:]
+    header = parse_a78_header(data)
+    rom_data = payload_from_a78(data, header)
     print(f"[CONVERT] Extracted {len(rom_data)} bytes of ROM data.")
+
+    if not header.magic_ok:
+        print("[CONVERT] Warning: A78 magic text mismatch at offset 0x01.")
+    if not header.end_magic_ok:
+        print("[CONVERT] Warning: A78 end magic mismatch at offset 0x64.")
 
     if len(rom_data) > WINDOW_BYTES:
         print(f"ERROR: ROM size {len(rom_data)} exceeds current 48KB cartridge window ({WINDOW_BYTES} bytes).")

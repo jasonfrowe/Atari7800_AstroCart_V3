@@ -56,26 +56,33 @@ module atari_cart_top #(
         end
     end
 
+    // Console warm-reset assist: if PHI2 disappears for a long window,
+    // force an internal reset pulse so the cart cleanly re-initializes when PHI2 returns.
+    reg [19:0] phi2_idle_ctr = 20'd0;
+    reg [11:0] warm_rst_ctr  = 12'd0;
+    reg        warm_rst_n    = 1'b0;
+
     // ------------------------------------------------------------------------
     // Noise-Filtered Synchronizers for Atari 7800 Signals (27MHz System Clock)
     // ------------------------------------------------------------------------
-    reg [3:0] phi2_pipe;
+    reg [1:0] phi2_pipe;
     reg [2:0] rw_pipe;
+    reg [15:0] a_pipe;
     reg [15:0] a_sync;
     reg [7:0] d_in_sync;
     reg       phi2_clean;
 
     always @(posedge clk) begin
-        phi2_pipe <= {phi2_pipe[2:0], phi2};
+        phi2_pipe <= {phi2_pipe[0], phi2};
         rw_pipe   <= {rw_pipe[1:0], rw};
-        a_sync    <= a;
+        a_pipe    <= a;
+        if (a_pipe == a)
+            a_sync <= a;
         d_in_sync <= d;
 
-        // 3-Sample Majority Filter on PHI2 clock to eliminate level-shifter ringing
-        if (phi2_pipe[3:1] == 3'b111)
-            phi2_clean <= 1'b1;
-        else if (phi2_pipe[3:1] == 3'b000)
-            phi2_clean <= 1'b0;
+        // Use a fast synchronized PHI2 view; longer majority filtering proved too slow
+        // on MARIA-heavy fetch bursts.
+        phi2_clean <= phi2_pipe[1];
     end
 
     reg phi2_clean_prev;
@@ -86,46 +93,56 @@ module atari_cart_top #(
     wire phi2_high  = phi2_clean;
     wire phi2_rise  = (phi2_clean && !phi2_clean_prev);
     wire rw_is_read = rw_pipe[1];
+    wire core_rst_n = rst_n && warm_rst_n;
+
+    always @(posedge clk) begin
+        if (phi2_rise)
+            phi2_idle_ctr <= 20'd0;
+        else if (phi2_idle_ctr != 20'hFFFFF)
+            phi2_idle_ctr <= phi2_idle_ctr + 1'b1;
+
+        if (phi2_idle_ctr == 20'hFFFFF) begin
+            warm_rst_n   <= 1'b0;
+            warm_rst_ctr <= 12'd0;
+        end else if (!warm_rst_n) begin
+            if (warm_rst_ctr < 12'd4095)
+                warm_rst_ctr <= warm_rst_ctr + 1'b1;
+            else
+                warm_rst_n <= 1'b1;
+        end
+    end
 
     // ------------------------------------------------------------------------
-    // Hazard5 RISC-V SoC Softcore Subsystem
+    // Minimal fixed-cart mode (Astrowing from BSRAM init only)
     // ------------------------------------------------------------------------
-    wire        pokey_enable;
-    wire [3:0]  mapper_type;
-    /* verilator lint_off UNUSEDSIGNAL */
-    wire        cart_ram_we;
-    wire [15:0] cart_ram_addr;
-    wire [7:0]  cart_ram_wdata;
-    /* verilator lint_on UNUSEDSIGNAL */
+    wire       pokey_enable   = 1'b1;
+    wire [1:0] pokey_addr_sel = 2'b01; // $0450 per Astrowing A78 header
+    wire [3:0] mapper_type    = 4'h0;  // Flat linear mapping
 
-    hazard5_soc #(
-        .FIRMWARE_HEX (FW_INIT_FILE)
-    ) u_soc (
-        .clk            (clk),
-        .rst_n          (rst_n),
-        .pokey_enable   (pokey_enable),
-        .mapper_type    (mapper_type),
-        .cart_ram_we    (cart_ram_we),
-        .cart_ram_addr  (cart_ram_addr),
-        .cart_ram_wdata (cart_ram_wdata),
-        .sd_cs          (sd_cs),
-        .sd_mosi        (sd_mosi),
-        .sd_miso        (sd_miso),
-        .sd_clk         (sd_clk)
-    );
+    // SD interface is unused in fixed-cart mode.
+    assign sd_cs   = 1'b1;
+    assign sd_mosi = 1'b0;
+    assign sd_clk  = 1'b0;
 
     // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
     // ------------------------------------------------------------------------
     wire is_cart_addr  = (a_sync >= 16'h4000);
-    wire is_pokey_addr = (a_sync[15:4] == 12'h400); // $4000 - $400F
+    wire is_pokey_4000 = (a_sync[15:4] == 12'h400); // $4000-$400F
+    wire is_pokey_0450 = (a_sync[15:4] == 12'h045); // $0450-$045F
+    wire is_pokey_0800 = (a_sync[15:4] == 12'h080); // $0800-$080F
+
+    wire is_pokey_addr = (pokey_addr_sel == 2'b00) ? is_pokey_4000 :
+                         (pokey_addr_sel == 2'b01) ? is_pokey_0450 :
+                         (pokey_addr_sel == 2'b10) ? is_pokey_0800 :
+                                                     1'b0;
 
     // SuperGame Bankswitch Mapper Module
     wire [18:0] phys_rom_addr;
 
     mapper_supergame u_mapper (
         .clk            (clk),
-        .rst_n          (rst_n),
+        .rst_n          (core_rst_n),
         .phi2_high      (phi2_high),
         .phi2_rise      (phi2_rise),
         .cs             (is_cart_addr),
@@ -177,7 +194,7 @@ module atari_cart_top #(
 
     pokey_synth u_pokey (
         .clk        (clk),
-        .rst_n      (rst_n),
+        .rst_n      (core_rst_n),
         .phi2_rise  (phi2_rise),
         .cs         (pokey_enable && is_pokey_addr),
         .rw         (rw_is_read),
@@ -190,7 +207,7 @@ module atari_cart_top #(
     // Audio PWM Modulator on Pin 76 (T_EAUD)
     audio_pwm u_pwm (
         .clk        (clk),
-        .rst_n      (rst_n),
+        .rst_n      (core_rst_n),
         .level      (pcm_audio),
         .pwm_out    (audio)
     );
@@ -198,24 +215,26 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Dynamic Data Bus Output Selection & Level Shifter Controls (U3 SN74LVC245)
     // ------------------------------------------------------------------------
-    wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // $400E (RANDOM register)
+    wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // RANDOM register at selected base + 0xE
+
+    // The cart responds in normal cartridge space plus the selected POKEY window.
+    wire is_fpga_response_addr = is_cart_addr || (pokey_enable && is_pokey_addr);
 
     // Decode read/write intent from synchronized Atari control signals.
-    wire is_cart_read  = is_cart_addr && rw_is_read;
-    wire cart_bus_active = phi2_high && is_cart_addr;
+    wire is_bus_read  = is_fpga_response_addr && rw_is_read;
 
     // U3 Buffer Direction (U3_DIR): 1 = FPGA->Atari (Read), 0 = Atari->FPGA (Write/Idle)
-    assign buf_dir = is_cart_read;
+    assign buf_dir = is_bus_read;
 
-    // U3 Buffer Enable (U3_OE): only active during valid PHI2 cartridge windows.
-    assign buf_oe  = cart_bus_active ? 1'b0 : 1'b1;
+    // Keep transceiver enabled continuously; direction + FPGA tri-state controls who drives.
+    assign buf_oe  = 1'b0;
 
     // FPGA Internal Data Bus Drive Logic
-    wire drive_pokey = pokey_enable && is_pokey_addr && is_pokey_read_reg && rw_is_read;
+    wire drive_pokey = pokey_enable && is_pokey_addr && rw_is_read;
     wire [7:0] bus_data_out = drive_pokey ? pokey_dout : rom_data_out;
 
-    // Drive only during active cartridge read windows to avoid low-phase contention.
-    assign d   = (cart_bus_active && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
+    // Drive when this cart owns a read cycle.
+    assign d   = (is_bus_read && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
     assign irq = 1'bZ;
 
     // ------------------------------------------------------------------------
@@ -227,7 +246,7 @@ module atari_cart_top #(
             activity_cnt <= activity_cnt + 1'b1;
     end
 
-    assign led = ~{activity_cnt[23:19], is_cart_read};
+    assign led = ~{activity_cnt[23:19], is_bus_read};
 
 endmodule
 `default_nettype wire

@@ -9,6 +9,14 @@ obj_dir/
 *.fst
 *.hex
 sim_trace.vcd
+final.png
+**/final.png
+
+# Generated trace outputs (keep checked-in reference traces)
+sim/traces/*.trace
+!sim/traces/reset_vector.trace
+!sim/traces/example_a7800_export.trace
+!sim/traces/example_a7800_owner_export.trace
 
 # Gowin EDA Build Output & Logs
 impl/

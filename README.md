@@ -96,3 +96,32 @@ Connect your Tang Nano 9K via USB-C to your Mac, then run:
   ```bash
   ./program.sh flash
   ```
+
+
+
+
+## ✅ Current Milestone (AstroWing Parity)
+
+AstroWing now has parity across emulator, simulation, and hardware checks:
+
+1. The instrumented A7800 build runs AstroWing fully, including POKEY audio.
+2. Emulator-exported bus traces replay in Verilator with boot assertions passing.
+3. Real hardware testing reports AstroWing behavior matching expected gameplay.
+
+## 📋 v1 Hardware Contract + Bring-Up Checklist
+
+The v1 contract and checklist are maintained in:
+
+`docs/V1_HARDWARE_CONTRACT.md`
+
+This document defines:
+
+1. Scope and non-scope for a Tang Nano 9K "v1 release".
+2. Functional and electrical acceptance criteria.
+3. Trace/simulation regression gates.
+4. Staged bring-up steps and stop/go criteria.
+5. Release evidence required before freezing a bitstream.
+
+For immediate implementation execution, use:
+
+`docs/V1_SPRINT0_CHECKLIST.md`

@@ -10,7 +10,7 @@ RTL_DIR   = ../rtl
 SIM_DIR   = .
 
 V_TOP     = atari_cart_top
-V_SRC     = $(RTL_DIR)/atari_cart_top.v
+V_SRC     = $(RTL_DIR)/atari_cart_top.v $(RTL_DIR)/pokey_synth.v $(RTL_DIR)/audio_pwm.v
 CPP_TB    = tb_cart.cpp
 HEX_FILE  = astrowing.hex
 A78_FILE  = ../carts/astrowing.a78

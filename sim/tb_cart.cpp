@@ -1,6 +1,6 @@
 // ============================================================================
 // File: tb_cart.cpp
-// Description: Verilator C++ Testbench for Atari 7800 Cartridge Interface
+// Description: Verilator C++ Testbench with POKEY Sound Verification
 // ============================================================================
 
 #include <iostream>
@@ -50,9 +50,17 @@ int main(int argc, char** argv) {
     top->a = 0x0000;
     top->halt = 1;
 
+    uint8_t current_write_val = 0;
+
     auto tick = [&]() {
+        if (top->rw == 0) {
+            top->d = current_write_val;
+        }
         top->clk = !top->clk;
         top->eval();
+        if (top->rw == 0) {
+            top->d = current_write_val;
+        }
         tfp->dump(main_time);
         main_time += 18518; // Half cycle of 27 MHz clock (~18.5 ns)
     };
@@ -62,9 +70,10 @@ int main(int argc, char** argv) {
     };
 
     // Helper to simulate a full PHI2 bus cycle
-    auto run_bus_cycle = [&](uint16_t addr, bool is_read) -> uint8_t {
+    auto run_bus_cycle = [&](uint16_t addr, bool is_read, uint8_t write_val = 0) -> uint8_t {
         top->a = addr;
         top->rw = is_read ? 1 : 0;
+        current_write_val = write_val;
         top->phi2 = 0;
 
         // PHI2 Low Phase (~7 system clocks)
@@ -75,7 +84,7 @@ int main(int argc, char** argv) {
         uint8_t sampled_data = 0;
         for (int i = 0; i < 16; i++) {
             tick();
-            if (i == 10) { // Sample data near the end of PHI2 high pulse
+            if (i == 10 && is_read) { // Sample data near the end of PHI2 high pulse
                 sampled_data = top->d;
             }
         }
@@ -117,21 +126,18 @@ int main(int argc, char** argv) {
     // 3. Test Buffer Control Signals (U3_DIR & U3_OE)
     std::cout << "\n[TEST 3] Testing Level Shifter Buffer Controls (U3_DIR, U3_OE)..." << std::endl;
 
-    // Step A: Inside Cart space ($8000 Read): U3_DIR should be 1 (FPGA->Atari), U3_OE should be 0 (Active)
     top->a = 0x8000; top->rw = 1; top->phi2 = 1;
     sync_settle();
     std::cout << " -> Step A ($8000 Read): buf_dir=" << (int)top->buf_dir << " buf_oe=" << (int)top->buf_oe << std::endl;
     assert(top->buf_dir == 1 && "buf_dir should be 1 during Cart Read");
     assert(top->buf_oe == 0 && "buf_oe should be 0 during Cart Read");
 
-    // Step B: Outside Cart space ($0080 TIA/RAM Read): U3_DIR should be 0 (Atari->FPGA), U3_OE should be 1 (Disabled)
     top->a = 0x0080; top->rw = 1; top->phi2 = 1;
     sync_settle();
     std::cout << " -> Step B ($0080 Read): buf_dir=" << (int)top->buf_dir << " buf_oe=" << (int)top->buf_oe << std::endl;
     assert(top->buf_dir == 0 && "buf_dir should be 0 outside Cart space");
     assert(top->buf_oe == 1 && "buf_oe should be 1 outside Cart space");
 
-    // Step C: Write cycle to Cart space ($4000 Write): U3_DIR should be 0, U3_OE should be 1
     top->a = 0x4000; top->rw = 0; top->phi2 = 1;
     sync_settle();
     std::cout << " -> Step C ($4000 Write): buf_dir=" << (int)top->buf_dir << " buf_oe=" << (int)top->buf_oe << std::endl;
@@ -151,8 +157,39 @@ int main(int argc, char** argv) {
     }
     std::cout << " -> PASSED!" << std::endl;
 
+    // 5. POKEY Audio Synthesizer & RANDOM Generator Test ($4000-$400F)
+    std::cout << "\n[TEST 5] Testing POKEY Audio Core & RANDOM Register..." << std::endl;
+
+    // Enable poly noise by writing SKCTL (0x03 to 0x400F)
+    run_bus_cycle(0x400F, false, 0x03);
+
+    // Set Channel 0 Volume-Only Mode (Volume=15)
+    run_bus_cycle(0x4001, false, 0x3F);
+
+    // Read POKEY RANDOM byte ($400E) with 16 cycles between reads to allow 17-bit LFSR to step fully
+    uint8_t rnd1 = run_bus_cycle(0x400E, true);
+    for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
+    uint8_t rnd2 = run_bus_cycle(0x400E, true);
+    for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
+    uint8_t rnd3 = run_bus_cycle(0x400E, true);
+
+    std::cout << " -> POKEY RANDOM Reads ($400E): 0x" << std::hex << (int)rnd1
+              << ", 0x" << (int)rnd2 << ", 0x" << (int)rnd3 << std::endl;
+    assert(rnd1 != 0x00 && rnd1 != 0xFF && "POKEY RANDOM returned invalid static byte!");
+    assert((rnd1 != rnd2 || rnd2 != rnd3) && "POKEY RANDOM generator failed to evolve!");
+
+    // Verify Audio PWM Pin Toggling
+    int audio_high_cnt = 0;
+    for (int i = 0; i < 256; i++) {
+        tick();
+        if (top->audio) audio_high_cnt++;
+    }
+    std::cout << " -> Audio PWM High Pulses (Pin 76): " << std::dec << audio_high_cnt << " / 256 cycles" << std::endl;
+    assert(audio_high_cnt > 0 && "Audio PWM pin failed to pulse when volume active!");
+    std::cout << " -> POKEY AUDIO & RANDOM TESTS PASSED!" << std::endl;
+
     std::cout << "\n========================================================" << std::endl;
-    std::cout << " ALL PHASE 1 VERILATOR TESTS PASSED SUCCESSFULLY!" << std::endl;
+    std::cout << " ALL PHASE 2 VERILATOR TESTS PASSED SUCCESSFULLY!" << std::endl;
     std::cout << " Waveform trace dumped to sim/sim_trace.vcd" << std::endl;
     std::cout << "========================================================" << std::endl;
 

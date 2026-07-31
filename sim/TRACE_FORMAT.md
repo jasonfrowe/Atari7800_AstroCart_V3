@@ -3,6 +3,7 @@
 The Verilator harness supports replaying Atari 7800 bus cycles captured from an external source such as an instrumented A7800 emulator.
 
 The recommended emulator-side export schema is defined in `sim/A7800_EXPORT_SCHEMA.md`.
+An implementation-oriented logging plan is in `sim/A7800_INSTRUMENTATION_PLAN.md`.
 
 Run it with:
 
@@ -73,3 +74,4 @@ The simulation harness also accepts `--rom-hex <file>` directly, and the Makefil
 If your emulator can export bus cycles as CSV, TSV, or JSON Lines, use `sim/a7800_trace_to_replay.py` to map those logs into replay traces. The converter looks for common field names such as `addr`, `rw`, `data`, `halt`, `expected_data`, and `drive_mode`.
 
 There is also a small fixture at `sim/traces/example_a7800_export.csv` that shows the expected CSV header and field naming.
+There is a second fixture at `sim/traces/example_a7800_owner_export.csv` showing that the converter can infer `halt` from `owner=CPU|MARIA` when a dedicated `halt` column is omitted.

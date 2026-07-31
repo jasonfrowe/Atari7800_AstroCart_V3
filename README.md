@@ -69,6 +69,7 @@ make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a
 *This is the intended path toward A7800 integration: capture real Sally/MARIA bus cycles from an emulator, convert them into replay format, and verify that the cartridge RTL responds correctly without flashing hardware.*
 
 The recommended A7800 CSV schema is documented in `sim/A7800_EXPORT_SCHEMA.md`.
+The recommended A7800 hook strategy is documented in `sim/A7800_INSTRUMENTATION_PLAN.md`.
 
 ### 1c. Replay Bus Traces Against The Menu ROM
 ```bash

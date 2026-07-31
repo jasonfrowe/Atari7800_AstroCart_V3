@@ -30,6 +30,7 @@ from typing import Dict, Iterable, Iterator, Optional
 
 
 ADDRESS_KEYS = ("address", "addr", "a")
+OWNER_KEYS = ("owner", "bus_owner", "master")
 RW_KEYS = ("rw", "r_w", "read_write", "direction")
 READ_BOOL_KEYS = ("is_read", "read")
 DATA_KEYS = ("data", "write_data", "din", "value")
@@ -101,6 +102,23 @@ def parse_is_read(row: Dict[str, object]) -> bool:
     raise ValueError("missing read/write field")
 
 
+def parse_halt(row: Dict[str, object]) -> int:
+    halt_value = first_present(row, HALT_KEYS)
+    if halt_value is not None:
+        return 1 if parse_bool(halt_value, default=False) else 0
+
+    owner_value = first_present(row, OWNER_KEYS)
+    if owner_value is not None:
+        text = str(owner_value).strip().lower()
+        if text in ("maria", "dma", "graphics"):
+            return 1
+        if text in ("cpu", "sally"):
+            return 0
+        raise ValueError(f"unsupported owner token for halt inference: {owner_value!r}")
+
+    return 0
+
+
 def detect_format(path: Path, requested: str) -> str:
     if requested != "auto":
         return requested
@@ -143,7 +161,7 @@ def format_row(row: Dict[str, object]) -> str:
 
     is_read = parse_is_read(row)
     write_data = parse_int(first_present(row, DATA_KEYS), default=0) & 0xFF
-    halt = 1 if parse_bool(first_present(row, HALT_KEYS), default=False) else 0
+    halt = parse_halt(row)
 
     expected_value = first_present(row, EXPECTED_KEYS)
     expected_token = "?" if expected_value in (None, "") else f"0x{parse_int(expected_value) & 0xFF:02X}"

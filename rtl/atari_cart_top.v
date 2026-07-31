@@ -113,11 +113,28 @@ module atari_cart_top #(
     end
 
     // ------------------------------------------------------------------------
-    // Minimal fixed-cart mode (Astrowing from BSRAM init only)
+    // Menu-first dual-image mode
     // ------------------------------------------------------------------------
-    wire       pokey_enable   = 1'b1;
+    localparam [15:0] GAME_BYTES = 16'd49152; // 48KB Astrowing payload
+    localparam [15:0] MENU_BYTES = 16'd8192;  // 8KB menu payload
+
+    wire       pokey_enable;
     wire [1:0] pokey_addr_sel = 2'b01; // $0450 per Astrowing A78 header
     wire [3:0] mapper_type    = 4'h0;  // Flat linear mapping
+
+    reg        game_mode;
+    reg        switch_pending;
+    reg [15:0] switch_delay;
+    reg        game_ready;
+    reg        post_ack_pending;
+    reg [15:0] post_ack_delay;
+    reg        trig_wr_prev;
+
+    localparam [15:0] POST_ACK_DELAY = 16'd120;
+
+    wire is_trigger_write = phi2_high && !rw_is_read && (a_sync == 16'h2200);
+
+    assign pokey_enable = game_mode;
 
     // SD interface is unused in fixed-cart mode.
     assign sd_cs   = 1'b1;
@@ -128,6 +145,8 @@ module atari_cart_top #(
     // Address Decoding & Memory Mapping
     // ------------------------------------------------------------------------
     wire is_cart_addr  = (a_sync >= 16'h4000);
+    wire is_status_addr = (a_sync == 16'h7FF0);
+    wire is_menu_addr = (a_sync >= 16'hE000);
     wire is_pokey_4000 = (a_sync[15:4] == 12'h400); // $4000-$400F
     wire is_pokey_0450 = (a_sync[15:4] == 12'h045); // $0450-$045F
     wire is_pokey_0800 = (a_sync[15:4] == 12'h080); // $0800-$080F
@@ -154,9 +173,10 @@ module atari_cart_top #(
     );
 
     // ------------------------------------------------------------------------
-    // Power-On Default Cartridge Memory (24x 2KB Gowin BSRAM Primitives)
+    // Cartridge ROM Memory
     // ------------------------------------------------------------------------
     wire [7:0] chunk_rdata [0:23];
+    wire [7:0] menu_chunk_rdata [0:3];
 
     rom_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]));
     rom_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]));
@@ -183,8 +203,16 @@ module atari_cart_top #(
     rom_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]));
     rom_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]));
 
+    rom_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_menu_rom_00 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[0]));
+    rom_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_menu_rom_01 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[1]));
+    rom_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_menu_rom_02 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[2]));
+    rom_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_menu_rom_03 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[3]));
+
     wire [4:0] rom_chunk_sel = phys_rom_addr[15:11];
     wire [7:0] rom_data_out = (rom_chunk_sel < 5'd24) ? chunk_rdata[rom_chunk_sel] : 8'hFF;
+
+    wire [1:0] menu_chunk_sel = a_sync[12:11];
+    wire [7:0] menu_data_out = menu_chunk_rdata[menu_chunk_sel];
 
     // ------------------------------------------------------------------------
     // POKEY Sound Synthesizer Core Integration
@@ -215,8 +243,6 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Dynamic Data Bus Output Selection & Level Shifter Controls (U3 SN74LVC245)
     // ------------------------------------------------------------------------
-    wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // RANDOM register at selected base + 0xE
-
     // The cart responds in normal cartridge space plus the selected POKEY window.
     wire is_fpga_response_addr = is_cart_addr || (pokey_enable && is_pokey_addr);
 
@@ -231,11 +257,70 @@ module atari_cart_top #(
 
     // FPGA Internal Data Bus Drive Logic
     wire drive_pokey = pokey_enable && is_pokey_addr && rw_is_read;
-    wire [7:0] bus_data_out = drive_pokey ? pokey_dout : rom_data_out;
+    wire [7:0] status_data_out = game_ready ? 8'h80 : 8'h00;
+    wire [7:0] menu_bus_data_out = is_status_addr ? status_data_out :
+                                   (is_menu_addr ? menu_data_out : 8'hFF);
+    wire [7:0] bus_data_out = game_mode ? (drive_pokey ? pokey_dout : rom_data_out)
+                                        : menu_bus_data_out;
 
     // Drive when this cart owns a read cycle.
     assign d   = (is_bus_read && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
     assign irq = 1'bZ;
+
+    always @(posedge clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            game_mode      <= 1'b0;
+            switch_pending <= 1'b0;
+            switch_delay   <= 16'd0;
+            game_ready     <= 1'b0;
+            post_ack_pending <= 1'b0;
+            post_ack_delay <= 16'd0;
+            trig_wr_prev   <= 1'b0;
+        end else begin
+            trig_wr_prev <= is_trigger_write;
+
+            if (post_ack_pending) begin
+                if (post_ack_delay >= POST_ACK_DELAY) begin
+                    game_mode        <= 1'b1;
+                    post_ack_pending <= 1'b0;
+                    post_ack_delay   <= 16'd0;
+                end else begin
+                    post_ack_delay <= post_ack_delay + 1'b1;
+                end
+            end
+
+            if (switch_pending && !game_ready) begin
+                if (switch_delay == 16'd4095)
+                    game_ready <= 1'b1;
+                else
+                    switch_delay <= switch_delay + 1'b1;
+            end
+
+            if (is_trigger_write && !trig_wr_prev) begin
+                if ((d_in_sync == 8'hA5) && switch_pending && game_ready) begin
+                    game_mode        <= 1'b1;
+                    switch_pending   <= 1'b0;
+                    switch_delay     <= 16'd0;
+                    game_ready       <= 1'b0;
+                    post_ack_pending <= 1'b0;
+                    post_ack_delay   <= 16'd0;
+                end else if (d_in_sync == 8'h40) begin
+                    game_mode      <= 1'b0;
+                    switch_pending <= 1'b0;
+                    switch_delay   <= 16'd0;
+                    game_ready     <= 1'b0;
+                    post_ack_pending <= 1'b0;
+                    post_ack_delay <= 16'd0;
+                end else if (d_in_sync[7]) begin
+                    switch_pending <= 1'b1;
+                    switch_delay   <= 16'd0;
+                    game_ready     <= 1'b0;
+                    post_ack_pending <= 1'b0;
+                    post_ack_delay <= 16'd0;
+                end
+            end
+        end
+    end
 
     // ------------------------------------------------------------------------
     // Diagnostic LEDs

@@ -148,22 +148,35 @@ flash_loop
  if flash_count > 0 then goto flash_loop
  
  ;
- ; Trigger FPGA: write selected game + 128 to $2200
- ; This sets bit 7, allowing FPGA to distinguish from initialization (0).
+ ; Trigger FPGA: for now every slot still hands off to the fixed Astrowing image.
+ ; Bit 7 marks the write as a load request.
  ;
  fpga_trigger = selected_game + 128
 
  ; Wait for load to finish (poll $7FF0)
 wait_loop
  restorescreen
- ; gosub draw_hud
  drawscreen
  asm
    lda $7FF0
    bpl .keep_waiting
+
+   ; Copy 6-byte handover stub to Zero-Page RAM ($80-$85)
+   ldx #0
+.copy_handover_stub
+   lda .handover_stub_code,x
+   sta $80,x
+   inx
+   cpx #6
+   bcc .copy_handover_stub
+
    lda #$A5
+   jmp $80
+
+.handover_stub_code
    sta $2200
    jmp ($FFFC)
+
 .keep_waiting
 end
  goto wait_loop

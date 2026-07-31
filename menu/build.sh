@@ -1,16 +1,22 @@
 #!/bin/bash
 # Build script for Atari 7800 menu program (8KB ROM Version)
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASIC_PATH="/Users/rowe/Software/Atari7800/7800basic"
 
 echo "Building Atari 7800 Menu Program (8KB ROM)..."
 echo "============================================="
 
+cd "${SCRIPT_DIR}"
+
 # Ensure 8KB variable redefinition in 7800basic_variable_redefs.h
 sed -i '' 's/ROM32K = 1/ROM8K = 1/g' 7800basic_variable_redefs.h 2>/dev/null || true
 
+# Preprocess menu.bas with 7800basic
+${BASIC_PATH}/7800basic.sh menu.bas > /dev/null 2>&1 || true
+
 # Generate menu_8k.asm
-python3 /convert_8k.py
+python3 "${SCRIPT_DIR}/convert_8k.py"
 
 # Assemble 8KB ROM using DASM
 echo "Assembling 8KB ROM with DASM..."

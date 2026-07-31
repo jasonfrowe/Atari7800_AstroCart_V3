@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 import sys, os
 
-src_path = "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/menu/menu.bas.asm"
-dst_path = "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/menu/menu_8k.asm"
+script_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(script_dir, "menu.bas.asm")
+dst_path = os.path.join(script_dir, "menu_8k.asm")
+
+if not os.path.exists(src_path):
+    print(f"Error: {src_path} does not exist.")
+    sys.exit(1)
 
 with open(src_path, "r") as f:
     content = f.read()
 
-# 1. Remove ROM32K definitions
-content = content.replace("ROM32K     = 1", "")
-content = content.replace("ROM32K = 1", "")
+# 1. Replace ROM32K symbol declaration with ROM8K
+content = content.replace("ROM32K     = 1", "ROM8K      = 1")
+content = content.replace("ROM32K = 1", "ROM8K = 1")
+content = content.replace("ifconst ROM32K", "ifconst DIS_ROM32K")
 
 # 2. Replace plotchars addresses from $6000-$60E0 to $E800-$E8E0
 addr_map = {
@@ -71,7 +77,8 @@ header_marker = " ;start address of cart..."
 header_idx = content_without_gfx.find(header_marker)
 
 final_content = (
-    content_without_gfx[:header_idx]
+    "ROM8K = 1\nROM8K SET 1\n"
+    + content_without_gfx[:header_idx]
     + "\n; --- GFX BLOCK AT $E000-$E7FF ---\n"
     + gfx_block
     + gamelist_rom_block

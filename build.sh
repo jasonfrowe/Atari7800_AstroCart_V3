@@ -118,15 +118,19 @@ run_gowin_synthesis() {
     # Copy memory initialization files to all potential working directories
     mkdir -p impl/gwsynthesis "$GOWIN_IDE/impl/gwsynthesis" "$GOWIN_IDE/impl/pnr"
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/"
+    cp sim/menu_chunk_*.hex "$PROJECT_DIR/"
     cp firmware/firmware.hex "$PROJECT_DIR/firmware.hex"
 
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp sim/menu_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp firmware/firmware.hex "$PROJECT_DIR/impl/gwsynthesis/firmware.hex"
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/"
+    cp sim/menu_chunk_*.hex "$GOWIN_IDE/"
     cp firmware/firmware.hex "$GOWIN_IDE/firmware.hex"
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp sim/menu_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp firmware/firmware.hex "$GOWIN_IDE/impl/gwsynthesis/firmware.hex"
 
     BUILD_TCL="$PROJECT_DIR/build.tcl"

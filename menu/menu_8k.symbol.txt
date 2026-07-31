@@ -17,13 +17,15 @@
 0.condpart7              ec21                  
 0.condpart8              ec2b                  
 0.condpart9              ec4f                  
+0.copy_handover_stub     ec67              (R )
 0.draw_cursor            eaab              (R )
 0.draw_game_list         e9ba              (R )
 0.draw_title             e969              (R )
 0.flash_loop             ec34              (R )
+0.handover_stub_code     ec76              (R )
 0.HSselect               0000 ????         (R )
 0.HSup                   0000 ????         (R )
-0.keep_waiting           ec6d              (R )
+0.keep_waiting           ec7c              (R )
 0.L00                    e900                  
 0.L01                    e900                  
 0.L010                   e92f                  
@@ -94,7 +96,7 @@
 0.L07                    e917                  
 0.L070                   ec5d                  
 0.L071                   ec60                  
-0.L072                   ec6d                  
+0.L072                   ec7c                  
 0.L08                    e923                  
 0.L09                    e92f                  
 0.main_loop              e947              (R )
@@ -160,16 +162,16 @@ BDPOKEY                  0010
 BDROF                    0008                  
 BDYM                     0020                  
 BEADHEADER               0000 ????         (R )
-boxcollision             f3c3                  
 BOXCOLLISION             0000 ????         (R )
+boxcollision             f3c3                  
 BREAKPROTECTOFF          0000 ????         (R )
 buttonhandlerhi          f1d2              (R )
 buttonhandlerlo          f1df              (R )
 buttonreadloop           f041              (R )
 buttonreadloopreturn     f057              (R )
 BUZZBASS                 0000 ????         (R )
-C                        00e8                  
 c                        00e8                  
+C                        00e8                  
 canary                   01c2              (R )
 CANARYOFF                0000 ????         (R )
 carryonpausing           f127              (R )
@@ -203,8 +205,8 @@ CTLSWB                   0283              (R )
 CTRL                     003c              (R )
 currentbank              2104                  
 currentrambank           2105                  
-d                        00e9                  
 D                        00e9                  
+d                        00e9                  
 DBOFFSET                 0070                  
 DEBUGCALC                0091                  
 DEBUGDRAW                00c1                  
@@ -212,6 +214,7 @@ DEBUGINTERRUPT           0000 ????         (R )
 DEBUGWAITCOLOR           0000 ????         (R )
 DEBUGWASTE               0041                  
 DEV                      0000 ????         (R )
+DIS_ROM32K               0000 ????         (R )
 dlend                    0065              (R )
 dlendloop                f133              (R )
 dlendmoreloops           f141                  
@@ -230,7 +233,7 @@ dlpnt                    0063              (R )
 DLPOINTH                 f52b              (R )
 DLPOINTL                 f543              (R )
 dlzero                   2101                  
-DMAHOLEEND0              ec70                  
+DMAHOLEEND0              ec7f                  
 doneSPDL                 f35d              (R )
 DOUBLEBUFFER             0000 ????         (R )
 doublebufferbufferdirty  00d7                  
@@ -275,7 +278,7 @@ game_count               00e6              (R )
 GAMEDESCRIPTION          4e616d65      str     (R ) "Test Name"
 GAMEDESCRIPTIONSET       0001              (R )
 gamedifficulty           2134                  
-gameend                  ec70              (R )
+gameend                  ec7f              (R )
 gamelist_buffer          e800                  
 gunbuttonhandler         f1c5              (R )
 H                        00ed                  
@@ -400,8 +403,8 @@ LZSA_SRC_LO              0044
 lzsa_srcptr              0044              (R )
 lzsa_winptr              0042              (R )
 LZSAFASTCOPYBYTE         0001                  
-m                        00f2                  
 M                        00f2                  
+m                        00f2                  
 MCPDEVCART               0000 ????         (R )
 mega7800.asm             0000 ????         (R )
 mega7800data0            01ba                  
@@ -581,7 +584,7 @@ ROM144K                  0000 ????         (R )
 ROM16K                   0000 ????         (R )
 ROM256K                  0000 ????         (R )
 ROM272K                  0000 ????         (R )
-ROM32K                   0000 ????         (R )
+ROM32K                   0001                  
 ROM48K                   0000 ????         (R )
 ROM512K                  0000 ????         (R )
 ROM528K                  0000 ????         (R )
@@ -733,8 +736,8 @@ SWBCNT                   0283
 SWCHA                    0280              (R )
 SWCHA_DIRMASK            f1c2              (R )
 SWCHB                    0282              (R )
-t                        00f9                  
 T                        00f9                  
+t                        00f9                  
 T1024T                   0297                  
 TDOUBLEBUFFEROFFSET      004d              (R )
 temp1                    0042              (R )
@@ -776,15 +779,15 @@ trakbally1               01bd
 TRAKTIME                 0000 ????         (R )
 TRAKXONLY                0000 ????         (R )
 TWOPADDLESUPPORT         0000 ????         (R )
-u                        00fa                  
 U                        00fa                  
+u                        00fa                  
 uninterruptableroutines  f14b              (R )
 unlockzonex              f35e                  
 USED_ADJUSTVISIBLE       0000 ????         (R )
 USED_PLOTVALUE           0000 ????         (R )
 USED_PLOTVALUEEXTRA      0000 ????         (R )
-V                        00fb                  
 v                        00fb                  
+V                        00fb                  
 valbufend                01ad              (R )
 valbufendsave            01ae              (R )
 VALBUFFER                2000                  

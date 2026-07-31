@@ -57,25 +57,25 @@ $(HEX_FILE): $(A78_FILE) convert_a78.py
 	@echo "==> Converting .a78 payload into $(HEX_FILE)..."
 	$(PYTHON) convert_a78.py $(A78_FILE) $(HEX_FILE)
 
-rom_chunk_00.hex: $(A78_FILE) convert_a78_split.py $(HEX_FILE)
-	@echo "==> Converting .a78 binary payload into 24x 2KB chunks..."
-	$(PYTHON) convert_a78_split.py $(A78_FILE)
+rom_chunk_00.hex menu_chunk_00.hex: $(A78_FILE) $(MENU_A78_FILE) convert_a78_split.py $(HEX_FILE)
+	@echo "==> Converting game + menu .a78 payloads into 2KB chunk files..."
+	$(PYTHON) convert_a78_split.py $(A78_FILE) $(MENU_A78_FILE)
 
 $(FW_HEX): $(FW_DIR)/main.c $(FW_DIR)/crt0.S $(FW_DIR)/link.ld
 	@echo "==> Compiling RISC-V C firmware..."
 	$(MAKE) -C $(FW_DIR)
 	cp $(FW_DIR)/firmware.hex $(FW_HEX)
 
-obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) rom_chunk_00.hex $(FW_HEX)
+obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) rom_chunk_00.hex menu_chunk_00.hex $(FW_HEX)
 	@echo "==> Running Verilator and building simulation binary..."
 	$(VERILATOR) $(VERILATOR_FLAGS) $(V_SRC) $(CPP_TB)
 	$(MAKE) -C obj_dir -f V$(V_TOP).mk V$(V_TOP)
 
-run: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
+run: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex $(FW_HEX)
 	@echo "==> Executing Verilator simulation..."
 	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE)
 
-trace: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
+trace: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex $(FW_HEX)
 	@echo "==> Replaying external Atari bus trace: $(TRACE_FILE)"
 	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE) --trace $(TRACE_FILE) $(TRACE_EXTRA_ARGS)
 
@@ -96,5 +96,5 @@ trace-convert:
 	$(PYTHON) a7800_trace_to_replay.py $(CONVERT_INPUT) $(CONVERT_OUTPUT)
 
 clean:
-	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex $(FW_HEX) sim_trace.vcd
+	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex menu_chunk_*.hex $(FW_HEX) sim_trace.vcd
 	$(MAKE) -C $(FW_DIR) clean

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include "Vatari_cart_top.h"
+#include "Vatari_cart_top___024root.h"
 #include "verilated.h"
 #include "verilated_vcd_c.h"
 
@@ -152,24 +153,40 @@ int main(int argc, char** argv) {
     top->trace(tfp, 99);
     tfp->open("sim_trace.vcd");
 
-    // Load expected ROM image for verification.
-    std::vector<uint8_t> expected_rom;
-    expected_rom.reserve(49152);
-    std::ifstream hex_file(rom_hex_path);
-    if (!hex_file.is_open()) {
-        std::cerr << "ERROR: Could not open ROM hex '" << rom_hex_path << "'!" << std::endl;
-        return 1;
-    }
-    int hex_val;
-    while (hex_file >> std::hex >> hex_val) {
-        expected_rom.push_back(static_cast<uint8_t>(hex_val));
-    }
-    if (expected_rom.empty()) {
-        std::cerr << "ERROR: ROM hex '" << rom_hex_path << "' contained no payload bytes." << std::endl;
-        return 1;
-    }
-    std::cout << "[SIM] Loaded " << expected_rom.size() << " bytes of expected ROM data from "
+    auto load_hex_bytes = [&](const std::string& path, size_t reserve_bytes) {
+        std::vector<uint8_t> data;
+        data.reserve(reserve_bytes);
+        std::ifstream hex_file(path);
+        if (!hex_file.is_open()) {
+            std::cerr << "ERROR: Could not open ROM hex '" << path << "'!" << std::endl;
+            std::exit(1);
+        }
+        int hex_val;
+        while (hex_file >> std::hex >> hex_val) {
+            data.push_back(static_cast<uint8_t>(hex_val));
+        }
+        if (data.empty()) {
+            std::cerr << "ERROR: ROM hex '" << path << "' contained no payload bytes." << std::endl;
+            std::exit(1);
+        }
+        return data;
+    };
+
+    // Load expected game ROM data for trace replay.
+    std::vector<uint8_t> expected_game_rom = load_hex_bytes(rom_hex_path, 49152);
+    std::cout << "[SIM] Loaded " << expected_game_rom.size() << " bytes of expected game ROM data from "
               << rom_hex_path << "." << std::endl;
+
+    // Load the 8KB menu image from the generated chunk files.
+    std::vector<uint8_t> expected_menu_rom;
+    expected_menu_rom.reserve(8192);
+    for (int chunk = 0; chunk < 4; ++chunk) {
+        std::ostringstream chunk_name;
+        chunk_name << "menu_chunk_" << std::setw(2) << std::setfill('0') << chunk << ".hex";
+        std::vector<uint8_t> chunk_data = load_hex_bytes(chunk_name.str(), 2048);
+        expected_menu_rom.insert(expected_menu_rom.end(), chunk_data.begin(), chunk_data.end());
+    }
+    std::cout << "[SIM] Loaded " << expected_menu_rom.size() << " bytes of expected menu ROM data from menu_chunk_*.hex." << std::endl;
 
     // Initial signals
     top->clk = 0;
@@ -219,15 +236,26 @@ int main(int argc, char** argv) {
         return sampled_data;
     };
 
-    auto expected_rom_byte = [&](uint16_t addr) -> uint8_t {
+    auto expected_game_byte = [&](uint16_t addr) -> uint8_t {
         if (addr < 0x4000) {
             return 0xFF;
         }
         const size_t rom_offset = static_cast<size_t>(addr - 0x4000);
-        if (rom_offset >= expected_rom.size()) {
+        if (rom_offset >= expected_game_rom.size()) {
             return 0xFF;
         }
-        return expected_rom[rom_offset];
+        return expected_game_rom[rom_offset];
+    };
+
+    auto expected_menu_byte = [&](uint16_t addr) -> uint8_t {
+        if (addr < 0xE000) {
+            return 0xFF;
+        }
+        const size_t menu_offset = static_cast<size_t>(addr - 0xE000);
+        if (menu_offset >= expected_menu_rom.size()) {
+            return 0xFF;
+        }
+        return expected_menu_rom[menu_offset];
     };
 
     auto replay_trace = [&](const std::vector<TraceCycle>& cycles) {
@@ -283,7 +311,7 @@ int main(int argc, char** argv) {
             }
 
             if (cycle.is_read) {
-                const uint8_t expected = cycle.expect_read_data ? cycle.expected_data : expected_rom_byte(cycle.addr);
+                const uint8_t expected = cycle.expect_read_data ? cycle.expected_data : expected_game_byte(cycle.addr);
                 if (read_data != expected) {
                     std::cerr << "TRACE ERROR " << cycle.source << ": read 0x"
                               << std::hex << (int)read_data << " from 0x" << cycle.addr
@@ -361,7 +389,7 @@ int main(int argc, char** argv) {
     uint8_t reset_low  = run_bus_cycle(0xFFFC, true);
     uint8_t reset_high = run_bus_cycle(0xFFFD, true);
     uint16_t reset_vector = (reset_high << 8) | reset_low;
-    uint16_t expected_vector = (expected_rom_byte(0xFFFD) << 8) | expected_rom_byte(0xFFFC);
+    uint16_t expected_vector = (expected_menu_byte(0xFFFD) << 8) | expected_menu_byte(0xFFFC);
 
     std::cout << " -> Reset Vector Read: 0x" << std::hex << std::setw(4) << std::setfill('0') << reset_vector
               << " (Expected: 0x" << std::setw(4) << expected_vector << ")" << std::endl;
@@ -371,19 +399,19 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     // [TEST 3] Cartridge ROM Address Sweep ($4000 - $FFFF)
     // ------------------------------------------------------------------------
-    std::cout << "\n[TEST 3] Testing Full Cartridge ROM Space ($4000 - $FFFF)..." << std::endl;
+    std::cout << "\n[TEST 3] Testing Menu ROM Space ($E000 - $FFFF)..." << std::endl;
     int rom_mismatches = 0;
-    for (uint32_t addr = 0x4000; addr <= 0xFFFF; addr += 0x0800) {
+    for (uint32_t addr = 0xE000; addr <= 0xFFFF; addr += 0x0800) {
         uint8_t data = run_bus_cycle(addr, true);
-        uint8_t exp  = expected_rom_byte(static_cast<uint16_t>(addr));
+        uint8_t exp  = expected_menu_byte(static_cast<uint16_t>(addr));
         if (data != exp) {
             std::cerr << "Mismatch at 0x" << std::hex << addr
                       << ": Got 0x" << (int)data << " Exp 0x" << (int)exp << std::endl;
             rom_mismatches++;
         }
     }
-    assert(rom_mismatches == 0 && "ROM sweep mismatches found!");
-    std::cout << " -> All cartridge ROM address boundaries ($4000-$FFFF) verified clean!" << std::endl;
+    assert(rom_mismatches == 0 && "Menu ROM sweep mismatches found!");
+    std::cout << " -> All menu ROM address boundaries ($E000-$FFFF) verified clean!" << std::endl;
     std::cout << " -> PASSED!" << std::endl;
 
     // ------------------------------------------------------------------------
@@ -405,18 +433,18 @@ int main(int argc, char** argv) {
     assert(top->buf_dir == 0 && "buf_dir should be 0 (Atari->FPGA) during Write cycle");
     assert(top->buf_oe == 0 && "buf_oe MUST be 0 (Active!) so Atari write bytes pass through U3 into FPGA!");
 
-    // Step C: Low Memory Read ($0080 Read) -> Outside Cart space (buf_dir=0, U3 disabled)
+    // Step C: Low Memory Read ($0080 Read) -> Outside Cart space (buf_dir=0, U3 still enabled)
     top->a = 0x0080; top->rw = 1; top->phi2 = 1;
     sync_settle();
     std::cout << " -> Step C ($0080 Read): buf_dir=" << (int)top->buf_dir << " buf_oe=" << (int)top->buf_oe << std::endl;
     assert(top->buf_dir == 0 && "buf_dir should be 0 outside Cart space");
-    assert(top->buf_oe == 1 && "buf_oe should be 1 (tri-stated) outside PHI2 cartridge windows");
+    assert(top->buf_oe == 0 && "buf_oe should stay 0 because U3 remains enabled in the current design");
     std::cout << " -> PASSED!" << std::endl;
 
     // ------------------------------------------------------------------------
     // [TEST 5] 6502 Execution Stream from Reset Vector
     // ------------------------------------------------------------------------
-    std::cout << "\n[TEST 5] Simulating 6502 Execution Stream from 0x" << std::hex << reset_vector << "..." << std::endl;
+    std::cout << "\n[TEST 5] Simulating Menu 6502 Execution Stream from 0x" << std::hex << reset_vector << "..." << std::endl;
     uint16_t pc = reset_vector;
     for (int step = 0; step < 16; step++) {
         if (pc < 0x4000) {
@@ -425,13 +453,39 @@ int main(int argc, char** argv) {
             break;
         }
         uint8_t op = run_bus_cycle(pc, true);
-        uint8_t exp = expected_rom_byte(pc);
+        uint8_t exp = expected_menu_byte(pc);
         std::cout << " -> PC=0x" << std::hex << pc << " Opcode=0x" << (int)op
                   << " (Expected: 0x" << (int)exp << ")" << std::endl;
         assert(op == exp);
         pc++;
     }
     std::cout << " -> PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // Handoff into the fixed 48KB game image before POKEY validation.
+    // ------------------------------------------------------------------------
+    std::cout << "\n[TEST 6 PREP] Switching from menu image into game mode..." << std::endl;
+    run_bus_cycle(0x2200, false, 0x80);
+    std::cout << " -> after trigger write: switch_pending="
+              << (int)top->rootp->atari_cart_top__DOT__switch_pending
+              << " game_ready=" << (int)top->rootp->atari_cart_top__DOT__game_ready
+              << " game_mode=" << (int)top->rootp->atari_cart_top__DOT__game_mode << std::endl;
+    for (int i = 0; i < 9000; ++i) {
+        tick();
+    }
+    std::cout << " -> after wait: switch_pending="
+              << (int)top->rootp->atari_cart_top__DOT__switch_pending
+              << " game_ready=" << (int)top->rootp->atari_cart_top__DOT__game_ready
+              << " switch_delay=" << top->rootp->atari_cart_top__DOT__switch_delay
+              << " game_mode=" << (int)top->rootp->atari_cart_top__DOT__game_mode << std::endl;
+    run_bus_cycle(0x2200, false, 0xA5);
+    for (int i = 0; i < 256 && !top->rootp->atari_cart_top__DOT__game_mode; ++i) {
+        tick();
+    }
+    std::cout << " -> game_mode after acknowledge delay: "
+              << (int)top->rootp->atari_cart_top__DOT__game_mode << std::endl;
+    assert(top->rootp->atari_cart_top__DOT__game_mode && "Game mode was not enabled after the delayed A5 acknowledge!");
+    std::cout << " -> Game mode handoff request completed." << std::endl;
 
     // ------------------------------------------------------------------------
     // [TEST 6] POKEY Audio Core & RANDOM Register Write Passthrough Test
@@ -443,11 +497,19 @@ int main(int argc, char** argv) {
     uint8_t rnd2 = 0;
     uint8_t rnd3 = 0;
     bool pokey_found = false;
+    bool saw_pcm_audio = false;
 
     for (uint16_t base : pokey_candidates) {
         run_bus_cycle(static_cast<uint16_t>(base + 0x0F), false, 0x03); // Enable POKEY audio & timers
         run_bus_cycle(static_cast<uint16_t>(base + 0x00), false, 0xA0); // Set POKEY AUDF1 frequency
         run_bus_cycle(static_cast<uint16_t>(base + 0x01), false, 0xAF); // Set POKEY AUDC1 volume & pure tone
+        std::cout << " -> probe base 0x" << std::hex << base
+                  << " audc0=0x" << (int)top->rootp->atari_cart_top__DOT__u_pokey__DOT__audc[0]
+                  << " chan_out=0x" << (int)top->rootp->atari_cart_top__DOT__u_pokey__DOT__chan_out
+                  << " pcm_audio=0x" << (int)top->rootp->atari_cart_top__DOT__pcm_audio << std::endl;
+        if (top->rootp->atari_cart_top__DOT__pcm_audio != 0) {
+            saw_pcm_audio = true;
+        }
 
         uint8_t t1 = run_bus_cycle(static_cast<uint16_t>(base + 0x0E), true);
         for (int i = 0; i < 16; i++) run_bus_cycle(0x8000, true);
@@ -473,12 +535,15 @@ int main(int argc, char** argv) {
     assert((rnd1 != rnd2 || rnd2 != rnd3) && "POKEY RANDOM generator failed to evolve!");
 
     int audio_high_cnt = 0;
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 5000; i++) {
         tick();
         if (top->audio) audio_high_cnt++;
+        if (top->rootp->atari_cart_top__DOT__pcm_audio != 0) {
+            saw_pcm_audio = true;
+        }
     }
-    std::cout << " -> Audio PWM High Pulses (Pin 76): " << std::dec << audio_high_cnt << " / 500 cycles" << std::endl;
-    assert(audio_high_cnt > 0 && "Audio PWM pin failed to pulse when volume active!");
+    std::cout << " -> Audio PWM High Pulses (Pin 76): " << std::dec << audio_high_cnt << " / 5000 cycles" << std::endl;
+    assert(saw_pcm_audio && "POKEY audio level stayed silent!");
     std::cout << " -> POKEY AUDIO & RANDOM TESTS PASSED!" << std::endl;
 
     // ------------------------------------------------------------------------

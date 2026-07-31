@@ -38,6 +38,8 @@ A78_FILE  ?= ../carts/astrowing.a78
 TRACE_FILE ?= traces/reset_vector.trace
 MENU_A78_FILE ?= ../menu/menu.bas.a78
 MENU_HEX_FILE ?= menu_payload.hex
+CONVERT_INPUT ?= traces/example_a7800_export.csv
+CONVERT_OUTPUT ?= traces/a7800_boot.trace
 
 VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -I$(RTL_DIR) \
@@ -46,7 +48,7 @@ VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -GFW_INIT_FILE=\"$(FW_HEX)\" \
                   --top-module $(V_TOP)
 
-.PHONY: all run trace menu-run menu-trace clean
+.PHONY: all run trace menu-run menu-trace trace-convert clean
 
 all: run
 
@@ -80,6 +82,10 @@ menu-run:
 menu-trace:
 	@echo "==> Replaying external Atari bus trace against menu ROM..."
 	$(MAKE) trace A78_FILE=$(MENU_A78_FILE) HEX_FILE=$(MENU_HEX_FILE) TRACE_FILE=$(TRACE_FILE)
+
+trace-convert:
+	@echo "==> Converting emulator bus log into replay trace..."
+	$(PYTHON) a7800_trace_to_replay.py $(CONVERT_INPUT) $(CONVERT_OUTPUT)
 
 clean:
 	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex $(FW_HEX) sim_trace.vcd

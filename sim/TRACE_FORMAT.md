@@ -8,6 +8,7 @@ Run it with:
 make -C sim trace TRACE_FILE=traces/reset_vector.trace
 make -C sim trace A78_FILE=../menu/menu.bas.a78 HEX_FILE=menu_payload.hex TRACE_FILE=traces/reset_vector.trace
 python3 sim/a7800_trace_to_replay.py exported_bus.csv sim/traces/a7800_boot.trace
+make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a7800_boot.trace
 ```
 
 Each non-empty, non-comment line in the trace file is:
@@ -57,3 +58,5 @@ That makes this a good intermediate step: the emulator can supply real Sally/MAR
 The simulation harness also accepts `--rom-hex <file>` directly, and the Makefile passes `HEX_FILE` through to the testbench. That lets you swap between Astrowings, the menu ROM, and future fixed-ROM images without editing the harness.
 
 If your emulator can export bus cycles as CSV, TSV, or JSON Lines, use `sim/a7800_trace_to_replay.py` to map those logs into replay traces. The converter looks for common field names such as `addr`, `rw`, `data`, `halt`, and `expected_data`.
+
+There is also a small fixture at `sim/traces/example_a7800_export.csv` that shows the expected CSV header and field naming.

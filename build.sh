@@ -2,10 +2,13 @@
 # ============================================================================
 # Build Script for Atari 7800 Multi-Cart V3 (Tang Nano 9K FPGA)
 # Usage:
-#   ./build.sh          - Default: Runs Verilator co-simulation test suite
-#   ./build.sh --sim    - Runs Verilator co-simulation test suite
-#   ./build.sh --gowin  - Synthesizes FPGA design with Gowin EDA tools
-#   ./build.sh --all    - Runs full simulation and Gowin FPGA synthesis
+#   ./build.sh                    - Default: Runs Verilator co-simulation test suite
+#   ./build.sh --sim              - Runs Verilator co-simulation test suite
+#   ./build.sh --sim-menu         - Runs Verilator harness against the prototype menu ROM
+#   ./build.sh --trace FILE       - Replays an external Atari bus trace against the default cart ROM
+#   ./build.sh --trace-menu FILE  - Replays an external Atari bus trace against the prototype menu ROM
+#   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
+#   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
 # ============================================================================
 
 set -e
@@ -16,6 +19,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 MODE="${1:---sim}"
+TRACE_FILE="$2"
 
 PROJECT_DIR="$(pwd)"
 GOWIN_IDE="/Applications/GowinIDE.app/Contents/Resources/Gowin_EDA/IDE/bin"
@@ -31,6 +35,39 @@ run_simulation() {
     make -C sim clean
     make -C sim
     echo -e "${GREEN}✓ Verilator Simulation Passed Cleanly!${NC}"
+}
+
+run_menu_simulation() {
+    echo -e "\n${YELLOW}[Phase 1-4] Running Verilator Co-Simulation Against Menu ROM...${NC}"
+    make -C sim clean
+    make -C sim menu-run
+    echo -e "${GREEN}✓ Menu ROM Verilator Simulation Passed Cleanly!${NC}"
+}
+
+run_trace_replay() {
+    local trace_file="$1"
+    if [ -z "$trace_file" ]; then
+        echo -e "${RED}Error: --trace requires a trace file path${NC}"
+        echo "Usage: ./build.sh --trace sim/traces/a7800_boot.trace"
+        exit 1
+    fi
+
+    echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Bus Trace...${NC}"
+    make -C sim trace TRACE_FILE="$trace_file"
+    echo -e "${GREEN}✓ Trace Replay Passed Cleanly!${NC}"
+}
+
+run_menu_trace_replay() {
+    local trace_file="$1"
+    if [ -z "$trace_file" ]; then
+        echo -e "${RED}Error: --trace-menu requires a trace file path${NC}"
+        echo "Usage: ./build.sh --trace-menu sim/traces/a7800_boot.trace"
+        exit 1
+    fi
+
+    echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Bus Trace Against Menu ROM...${NC}"
+    make -C sim menu-trace TRACE_FILE="$trace_file"
+    echo -e "${GREEN}✓ Menu Trace Replay Passed Cleanly!${NC}"
 }
 
 # Function: Run Gowin EDA Synthesis & Bitstream Generation
@@ -125,6 +162,15 @@ case "$MODE" in
     --sim)
         run_simulation
         ;;
+    --sim-menu)
+        run_menu_simulation
+        ;;
+    --trace)
+        run_trace_replay "$TRACE_FILE"
+        ;;
+    --trace-menu)
+        run_menu_trace_replay "$TRACE_FILE"
+        ;;
     --gowin)
         run_gowin_synthesis
         ;;
@@ -134,7 +180,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --gowin | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-menu FILE | --gowin | --all]"
         exit 1
         ;;
 esac

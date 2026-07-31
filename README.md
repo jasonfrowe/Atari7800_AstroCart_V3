@@ -56,20 +56,20 @@ FPGA hardware debugging over USB/JTAG is slow and unobservable. When a bug occur
 
 ### 1a. Run The Menu ROM Through The Same Harness
 ```bash
-make -C sim menu-run
+./build.sh --sim-menu
 ```
 *Converts `menu/menu.bas.a78`, pads it to the current 48KB fixed-ROM window, and runs the same Verilator harness against the menu image instead of Astrowings.*
 
 ### 1b. Replay Emulator-Exported Bus Traces
 ```bash
-python3 sim/a7800_trace_to_replay.py exported_bus.csv sim/traces/a7800_boot.trace
-make -C sim trace TRACE_FILE=traces/a7800_boot.trace
+make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a7800_boot.trace
+./build.sh --trace sim/traces/a7800_boot.trace
 ```
 *This is the intended path toward A7800 integration: capture real Sally/MARIA bus cycles from an emulator, convert them into replay format, and verify that the cartridge RTL responds correctly without flashing hardware.*
 
 ### 1c. Replay Bus Traces Against The Menu ROM
 ```bash
-make -C sim menu-trace TRACE_FILE=traces/a7800_boot.trace
+./build.sh --trace-menu sim/traces/a7800_boot.trace
 ```
 *Uses the same replay file, but swaps in the prototype menu ROM as the expected cartridge image.*
 

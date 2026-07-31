@@ -23,5 +23,5 @@ def convert_a78_to_hex(a78_path, hex_path):
 
 if __name__ == "__main__":
     a78_input = sys.argv[1] if len(sys.argv) > 1 else "../carts/astrowing.a78"
-    hex_output = sys.argv[2] if len(sys.argv) > 2 else "astrowing.hex"
+    hex_output = sys.argv[2] if len(sys.argv) > 2 else "cart_payload.hex"
     convert_a78_to_hex(a78_input, hex_output)

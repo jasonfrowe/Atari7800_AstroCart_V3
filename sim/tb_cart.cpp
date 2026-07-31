@@ -92,6 +92,7 @@ int main(int argc, char** argv) {
     Verilated::traceEverOn(true);
 
     std::string trace_path;
+    std::string rom_hex_path = "cart_payload.hex";
     for (int argi = 1; argi < argc; ++argi) {
         std::string arg = argv[argi];
         if (arg == "--trace") {
@@ -101,6 +102,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
             trace_path = argv[++argi];
+        } else if (arg == "--rom-hex") {
+            if (argi + 1 >= argc) {
+                std::cerr << "ERROR: --rom-hex requires a file path." << std::endl;
+                return 1;
+            }
+            rom_hex_path = argv[++argi];
         } else if (arg == "--trace-help") {
             print_trace_usage();
             return 0;
@@ -113,19 +120,24 @@ int main(int argc, char** argv) {
     top->trace(tfp, 99);
     tfp->open("sim_trace.vcd");
 
-    // Load expected ROM image from astrowing.hex for verification
-    std::vector<uint8_t> expected_rom(49152);
-    std::ifstream hex_file("astrowing.hex");
+    // Load expected ROM image for verification.
+    std::vector<uint8_t> expected_rom;
+    expected_rom.reserve(49152);
+    std::ifstream hex_file(rom_hex_path);
     if (!hex_file.is_open()) {
-        std::cerr << "ERROR: Could not open astrowing.hex!" << std::endl;
+        std::cerr << "ERROR: Could not open ROM hex '" << rom_hex_path << "'!" << std::endl;
         return 1;
     }
     int hex_val;
-    size_t rom_idx = 0;
-    while (hex_file >> std::hex >> hex_val && rom_idx < 49152) {
-        expected_rom[rom_idx++] = static_cast<uint8_t>(hex_val);
+    while (hex_file >> std::hex >> hex_val) {
+        expected_rom.push_back(static_cast<uint8_t>(hex_val));
     }
-    std::cout << "[SIM] Loaded " << rom_idx << " bytes of expected ROM data." << std::endl;
+    if (expected_rom.empty()) {
+        std::cerr << "ERROR: ROM hex '" << rom_hex_path << "' contained no payload bytes." << std::endl;
+        return 1;
+    }
+    std::cout << "[SIM] Loaded " << expected_rom.size() << " bytes of expected ROM data from "
+              << rom_hex_path << "." << std::endl;
 
     // Initial signals
     top->clk = 0;

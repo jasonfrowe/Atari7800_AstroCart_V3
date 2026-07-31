@@ -1,5 +1,5 @@
 # Minimal reset-vector replay example.
-# Expected bytes are auto-derived from astrowing.hex.
+# Expected bytes are auto-derived from the ROM hex passed to the harness.
 
 0xFFFC R 0x00 0 ?
 0xFFFD R 0x00 0 ?

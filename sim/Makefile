@@ -32,10 +32,12 @@ V_SRC     = $(RTL_DIR)/atari_cart_top.v \
             $(RTL_DIR)/hazard5/hdl/arith/hazard5_shift_barrel.v
 
 CPP_TB    = tb_cart.cpp
-HEX_FILE  = astrowing.hex
+HEX_FILE  ?= cart_payload.hex
 FW_HEX    = firmware.hex
-A78_FILE  = ../carts/astrowing.a78
+A78_FILE  ?= ../carts/astrowing.a78
 TRACE_FILE ?= traces/reset_vector.trace
+MENU_A78_FILE ?= ../menu/menu.bas.a78
+MENU_HEX_FILE ?= menu_payload.hex
 
 VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -I$(RTL_DIR) \
@@ -44,7 +46,7 @@ VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -GFW_INIT_FILE=\"$(FW_HEX)\" \
                   --top-module $(V_TOP)
 
-.PHONY: all run trace clean
+.PHONY: all run trace menu-run menu-trace clean
 
 all: run
 
@@ -65,11 +67,19 @@ obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) rom_chunk_00.hex $(FW_HEX)
 
 run: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
 	@echo "==> Executing Verilator simulation..."
-	./obj_dir/Vatari_cart_top
+	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE)
 
 trace: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
 	@echo "==> Replaying external Atari bus trace: $(TRACE_FILE)"
-	./obj_dir/Vatari_cart_top --trace $(TRACE_FILE)
+	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE) --trace $(TRACE_FILE)
+
+menu-run:
+	@echo "==> Executing Verilator simulation with menu ROM..."
+	$(MAKE) run A78_FILE=$(MENU_A78_FILE) HEX_FILE=$(MENU_HEX_FILE)
+
+menu-trace:
+	@echo "==> Replaying external Atari bus trace against menu ROM..."
+	$(MAKE) trace A78_FILE=$(MENU_A78_FILE) HEX_FILE=$(MENU_HEX_FILE) TRACE_FILE=$(TRACE_FILE)
 
 clean:
 	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex $(FW_HEX) sim_trace.vcd

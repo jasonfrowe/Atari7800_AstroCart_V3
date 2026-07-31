@@ -7,6 +7,8 @@
 
 import sys
 
+WINDOW_BYTES = 24 * 2048
+
 def convert_a78_split(input_a78):
     with open(input_a78, 'rb') as f:
         data = f.read()
@@ -15,9 +17,14 @@ def convert_a78_split(input_a78):
     rom_data = data[128:]
     print(f"[CONVERT] Extracted {len(rom_data)} bytes of ROM data.")
 
-    if len(rom_data) < 49152:
-        print("ERROR: ROM size less than 48KB!")
+    if len(rom_data) > WINDOW_BYTES:
+        print(f"ERROR: ROM size {len(rom_data)} exceeds current 48KB cartridge window ({WINDOW_BYTES} bytes).")
         sys.exit(1)
+
+    if len(rom_data) < WINDOW_BYTES:
+        pad_len = WINDOW_BYTES - len(rom_data)
+        print(f"[CONVERT] Padding ROM image with {pad_len} bytes of 0xFF to fill the 48KB cartridge window.")
+        rom_data = rom_data + bytes([0xFF]) * pad_len
 
     for i in range(24):
         chunk = rom_data[i*2048 : (i+1)*2048]

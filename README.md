@@ -52,7 +52,26 @@ FPGA hardware debugging over USB/JTAG is slow and unobservable. When a bug occur
 ```bash
 ./build.sh --sim
 ```
-*Executes Tests 1–7 covering Reset Vector Fetch, ROM Reads, Buffer Control Timing, 6502 Opcode Stream, POKEY Synthesis & RANDOM LFSR, Hazard5 RISC-V Softcore execution, and SuperGame Bankswitching.*
+*Builds the Verilator harness and runs the current cartridge-response checks: reset vector fetch, ROM reads, transceiver direction behavior, opcode stream reads, POKEY RANDOM/audio activity, and basic HALT-path visibility. This does not yet prove Hazard5-driven SD loading or full SuperGame bankswitch operation.*
+
+### 1a. Run The Menu ROM Through The Same Harness
+```bash
+make -C sim menu-run
+```
+*Converts `menu/menu.bas.a78`, pads it to the current 48KB fixed-ROM window, and runs the same Verilator harness against the menu image instead of Astrowings.*
+
+### 1b. Replay Emulator-Exported Bus Traces
+```bash
+python3 sim/a7800_trace_to_replay.py exported_bus.csv sim/traces/a7800_boot.trace
+make -C sim trace TRACE_FILE=traces/a7800_boot.trace
+```
+*This is the intended path toward A7800 integration: capture real Sally/MARIA bus cycles from an emulator, convert them into replay format, and verify that the cartridge RTL responds correctly without flashing hardware.*
+
+### 1c. Replay Bus Traces Against The Menu ROM
+```bash
+make -C sim menu-trace TRACE_FILE=traces/a7800_boot.trace
+```
+*Uses the same replay file, but swaps in the prototype menu ROM as the expected cartridge image.*
 
 ### 2. Synthesize Gowin FPGA Bitstream
 ```bash

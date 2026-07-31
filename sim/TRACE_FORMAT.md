@@ -6,6 +6,8 @@ Run it with:
 
 ```bash
 make -C sim trace TRACE_FILE=traces/reset_vector.trace
+make -C sim trace A78_FILE=../menu/menu.bas.a78 HEX_FILE=menu_payload.hex TRACE_FILE=traces/reset_vector.trace
+python3 sim/a7800_trace_to_replay.py exported_bus.csv sim/traces/a7800_boot.trace
 ```
 
 Each non-empty, non-comment line in the trace file is:
@@ -51,3 +53,7 @@ What replay does not yet do:
 - It does not yet compare full-system frame output.
 
 That makes this a good intermediate step: the emulator can supply real Sally/MARIA bus sequences, and Verilator can verify the cartridge responds correctly before hardware bring-up.
+
+The simulation harness also accepts `--rom-hex <file>` directly, and the Makefile passes `HEX_FILE` through to the testbench. That lets you swap between Astrowings, the menu ROM, and future fixed-ROM images without editing the harness.
+
+If your emulator can export bus cycles as CSV, TSV, or JSON Lines, use `sim/a7800_trace_to_replay.py` to map those logs into replay traces. The converter looks for common field names such as `addr`, `rw`, `data`, `halt`, and `expected_data`.

@@ -1,0 +1,33 @@
+# macOS System Files
+.DS_Store
+._*
+.Trashes
+
+# Verilator & Simulation Build Artifacts
+obj_dir/
+*.vcd
+*.fst
+*.hex
+sim_trace.vcd
+
+# Gowin EDA Build Output & Logs
+impl/
+*.fs
+*.rpt
+*.gprj.user
+gowin_rec.tmp
+*.power.html
+
+# C/C++ & RISC-V Build Output
+*.o
+*.elf
+*.bin
+*.map
+*.a
+*.so
+*.dylib
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo

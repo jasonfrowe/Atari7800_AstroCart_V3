@@ -61,6 +61,31 @@ Current limitation of that first patch:
 - It does not yet log auxiliary cartridge windows below `$4000` such as `read_04xx`, `read_08xx`, `read_10xx`, or `read_30xx`.
 - That is acceptable for the first boot-trace milestone because reset-vector fetch, early opcode streaming, and MARIA DMA for fixed-ROM carts all happen through the main `$4000-$FFFF` path.
 
+## Preferred Checkout
+
+The preferred A7800 checkout on this machine is:
+
+```text
+/Users/rowe/Software/atari/a7800
+```
+
+It already had a cleaner macOS build path than `/Users/rowe/Software/a7800`, and the cart-bus exporter patch has now been ported there.
+
+## Current Working Build Command
+
+The preferred A7800 checkout now builds on this machine with the following command:
+
+```text
+cd /Users/rowe/Software/atari/a7800
+make -j$(sysctl -n hw.ncpu)
+```
+
+Resulting emulator binary:
+
+```text
+/Users/rowe/Software/atari/a7800/mame64
+```
+
 ## Required Hook Points
 
 You do not need a global event system. Add two narrow hooks near the existing memory-access codepaths.

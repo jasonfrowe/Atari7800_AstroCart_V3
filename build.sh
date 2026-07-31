@@ -26,6 +26,15 @@ PROJECT_DIR="$(pwd)"
 GOWIN_IDE="/Applications/GowinIDE.app/Contents/Resources/Gowin_EDA/IDE/bin"
 IDE_LIB="/Applications/GowinIDE.app/Contents/Resources/Gowin_EDA/IDE/lib"
 
+resolve_trace_path() {
+    local trace_file="$1"
+    if [[ "$trace_file" = /* ]]; then
+        printf '%s\n' "$trace_file"
+    else
+        printf '%s\n' "$PROJECT_DIR/$trace_file"
+    fi
+}
+
 echo -e "${GREEN}==============================================${NC}"
 echo -e "${GREEN} Atari 7800 Multi-Cart V3 Build System ${NC}"
 echo -e "${GREEN}==============================================${NC}"
@@ -53,8 +62,11 @@ run_trace_replay() {
         exit 1
     fi
 
+    local resolved_trace
+    resolved_trace="$(resolve_trace_path "$trace_file")"
+
     echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Bus Trace...${NC}"
-    make -C sim trace TRACE_FILE="$trace_file"
+    make -C sim trace TRACE_FILE="$resolved_trace"
     echo -e "${GREEN}✓ Trace Replay Passed Cleanly!${NC}"
 }
 
@@ -66,8 +78,11 @@ run_boot_trace_replay() {
         exit 1
     fi
 
+    local resolved_trace
+    resolved_trace="$(resolve_trace_path "$trace_file")"
+
     echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Boot Trace With Assertions...${NC}"
-    make -C sim trace-boot TRACE_FILE="$trace_file"
+    make -C sim trace-boot TRACE_FILE="$resolved_trace"
     echo -e "${GREEN}✓ Boot Trace Replay Passed Cleanly!${NC}"
 }
 
@@ -79,8 +94,11 @@ run_menu_trace_replay() {
         exit 1
     fi
 
+    local resolved_trace
+    resolved_trace="$(resolve_trace_path "$trace_file")"
+
     echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Bus Trace Against Menu ROM...${NC}"
-    make -C sim menu-trace TRACE_FILE="$trace_file"
+    make -C sim menu-trace TRACE_FILE="$resolved_trace"
     echo -e "${GREEN}✓ Menu Trace Replay Passed Cleanly!${NC}"
 }
 

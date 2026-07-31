@@ -1,13 +1,14 @@
 // ============================================================================
 // Module: atari_cart_top
-// Description: Atari 7800 Multi-Cart Top Level HDL with POKEY Audio Support
+// Description: Atari 7800 Multi-Cart Top Level HDL with Hazard5 RISC-V Softcore
 // Target: Sipeed Tang Nano 9K (Gowin GW1NR-9)
 // ============================================================================
 
 `default_nettype none
 
 module atari_cart_top #(
-    parameter C_INIT_FILE = "astrowing.hex"
+    parameter C_INIT_FILE = "astrowing.hex",
+    parameter FW_INIT_FILE = "firmware.hex"
 )(
     // System Clock & Resets
     input  wire        clk,          // 27 MHz onboard clock
@@ -31,6 +32,12 @@ module atari_cart_top #(
 
     // Audio Output Pin
     output wire        audio,        // T_EAUD audio pin (PWM/Delta-Sigma)
+
+    // MicroSD Card SPI Hardware Pins per PINS.md
+    output wire        sd_cs,        // Pin 38
+    output wire        sd_mosi,      // Pin 37
+    input  wire        sd_miso,      // Pin 39
+    output wire        sd_clk,       // Pin 36
 
     // Debug LEDs
     output wire [5:0]  led
@@ -56,6 +63,33 @@ module atari_cart_top #(
     wire rw_is_read = rw_sync[1];
 
     // ------------------------------------------------------------------------
+    // Hazard5 RISC-V SoC Softcore Subsystem
+    // ------------------------------------------------------------------------
+    wire        pokey_enable;
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire [3:0]  mapper_type;
+    /* verilator lint_on UNUSEDSIGNAL */
+    wire        cart_ram_we;
+    wire [15:0] cart_ram_addr;
+    wire [7:0]  cart_ram_wdata;
+
+    hazard5_soc #(
+        .FIRMWARE_HEX (FW_INIT_FILE)
+    ) u_soc (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .pokey_enable   (pokey_enable),
+        .mapper_type    (mapper_type),
+        .cart_ram_we    (cart_ram_we),
+        .cart_ram_addr  (cart_ram_addr),
+        .cart_ram_wdata (cart_ram_wdata),
+        .sd_cs          (sd_cs),
+        .sd_mosi        (sd_mosi),
+        .sd_miso        (sd_miso),
+        .sd_clk         (sd_clk)
+    );
+
+    // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
     // - Cartridge Space: $4000-$FFFF
     // - POKEY Registers: $4000-$400F (16 Bytes, mapped when POKEY enabled)
@@ -64,11 +98,8 @@ module atari_cart_top #(
     wire is_pokey_addr = (a_sync[15:4] == 12'h400); // $4000 - $400F
     wire [15:0] rom_addr = a_sync - 16'h4000;
 
-    // Configurable POKEY enable (1 = POKEY active at $4000-$400F, 0 = Disabled)
-    wire pokey_enable = 1'b1;
-
     // ------------------------------------------------------------------------
-    // Cartridge ROM Storage (48KB Dual-Port RAM/ROM initialized with astrowing)
+    // Cartridge Dual-Port RAM (Read by 7800 Bus, Written by Hazard5 Loader)
     // ------------------------------------------------------------------------
     reg [7:0] rom_mem [0:49151];
     reg [7:0] rom_data_out;
@@ -79,9 +110,17 @@ module atari_cart_top #(
         end
     end
 
+    // Port A: Read by Atari 7800 Bus
     always @(posedge clk) begin
         if (is_cart_addr) begin
             rom_data_out <= rom_mem[rom_addr[15:0]];
+        end
+    end
+
+    // Port B: Write by Hazard5 RISC-V Loader
+    always @(posedge clk) begin
+        if (cart_ram_we && cart_ram_addr < 16'hC000) begin
+            rom_mem[cart_ram_addr] <= cart_ram_wdata;
         end
     end
 
@@ -113,8 +152,6 @@ module atari_cart_top #(
 
     // ------------------------------------------------------------------------
     // Dynamic Data Bus Output Selection & Buffer Controls
-    // - For POKEY: Only drive bus when reading POKEY RANDOM register ($400E)
-    // - For ROM: Drive bus when reading any Cartridge ROM address
     // ------------------------------------------------------------------------
     wire is_pokey_read_reg = (a_sync[3:0] == 4'hE); // $400E (RANDOM register)
     wire drive_pokey = pokey_enable && is_pokey_addr && is_pokey_read_reg && rw_is_read && phi2_high;
@@ -129,7 +166,7 @@ module atari_cart_top #(
     assign irq     = 1'bZ;
 
     // ------------------------------------------------------------------------
-    // Diagnostic LEDs (Activity & Audio Counter)
+    // Diagnostic LEDs
     // ------------------------------------------------------------------------
     reg [23:0] activity_cnt;
     always @(posedge clk) begin

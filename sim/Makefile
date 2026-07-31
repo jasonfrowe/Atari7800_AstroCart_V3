@@ -8,16 +8,38 @@ MKDIR     = mkdir -p
 
 RTL_DIR   = ../rtl
 SIM_DIR   = .
+FW_DIR    = ../firmware
 
 V_TOP     = atari_cart_top
-V_SRC     = $(RTL_DIR)/atari_cart_top.v $(RTL_DIR)/pokey_synth.v $(RTL_DIR)/audio_pwm.v
+V_SRC     = $(RTL_DIR)/atari_cart_top.v \
+            $(RTL_DIR)/pokey_synth.v \
+            $(RTL_DIR)/audio_pwm.v \
+            $(RTL_DIR)/spi_sd.v \
+            $(RTL_DIR)/hazard5_soc.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_cpu_1port.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_core.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_csr.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_decode.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_frontend.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_instr_decompress.v \
+            $(RTL_DIR)/hazard5/hdl/hazard5_regfile_1w2r.v \
+            $(RTL_DIR)/hazard5/hdl/arith/hazard5_alu.v \
+            $(RTL_DIR)/hazard5/hdl/arith/hazard5_mul_fast.v \
+            $(RTL_DIR)/hazard5/hdl/arith/hazard5_muldiv_seq.v \
+            $(RTL_DIR)/hazard5/hdl/arith/hazard5_priority_encode.v \
+            $(RTL_DIR)/hazard5/hdl/arith/hazard5_shift_barrel.v
+
 CPP_TB    = tb_cart.cpp
 HEX_FILE  = astrowing.hex
+FW_HEX    = firmware.hex
 A78_FILE  = ../carts/astrowing.a78
 
-VERILATOR_FLAGS = -Wall -Wno-fatal --cc --exe --trace \
+VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -I$(RTL_DIR) \
+                  -I$(RTL_DIR)/hazard5/hdl \
+                  -I$(RTL_DIR)/hazard5/hdl/arith \
                   -GC_INIT_FILE=\"$(HEX_FILE)\" \
+                  -GFW_INIT_FILE=\"$(FW_HEX)\" \
                   --top-module $(V_TOP)
 
 .PHONY: all run clean
@@ -28,14 +50,20 @@ $(HEX_FILE): $(A78_FILE) convert_a78.py
 	@echo "==> Converting .a78 binary payload..."
 	$(PYTHON) convert_a78.py $(A78_FILE) $(HEX_FILE)
 
-obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) $(HEX_FILE)
+$(FW_HEX): $(FW_DIR)/main.c $(FW_DIR)/crt0.S $(FW_DIR)/link.ld
+	@echo "==> Compiling RISC-V C firmware..."
+	$(MAKE) -C $(FW_DIR)
+	cp $(FW_DIR)/firmware.hex $(FW_HEX)
+
+obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) $(HEX_FILE) $(FW_HEX)
 	@echo "==> Running Verilator and building simulation binary..."
 	$(VERILATOR) $(VERILATOR_FLAGS) $(V_SRC) $(CPP_TB)
 	$(MAKE) -C obj_dir -f V$(V_TOP).mk V$(V_TOP)
 
-run: obj_dir/V$(V_TOP) $(HEX_FILE)
+run: obj_dir/V$(V_TOP) $(HEX_FILE) $(FW_HEX)
 	@echo "==> Executing Verilator simulation..."
-	./obj_dir/V$(V_TOP)
+	./obj_dir/Vatari_cart_top
 
 clean:
-	rm -rf obj_dir $(HEX_FILE) sim_trace.vcd
+	rm -rf obj_dir $(HEX_FILE) $(FW_HEX) sim_trace.vcd
+	$(MAKE) -C $(FW_DIR) clean

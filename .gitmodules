@@ -1,0 +1,3 @@
+[submodule "rtl/hazard5"]
+	path = rtl/hazard5
+	url = https://github.com/Wren6991/Hazard5.git

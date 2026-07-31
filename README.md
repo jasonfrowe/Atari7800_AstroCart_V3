@@ -64,8 +64,11 @@ FPGA hardware debugging over USB/JTAG is slow and unobservable. When a bug occur
 ```bash
 make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a7800_boot.trace
 ./build.sh --trace sim/traces/a7800_boot.trace
+./build.sh --trace-boot sim/traces/a7800_boot.trace
 ```
 *This is the intended path toward A7800 integration: capture real Sally/MARIA bus cycles from an emulator, convert them into replay format, and verify that the cartridge RTL responds correctly without flashing hardware.*
+
+The recommended A7800 CSV schema is documented in `sim/A7800_EXPORT_SCHEMA.md`.
 
 ### 1c. Replay Bus Traces Against The Menu ROM
 ```bash

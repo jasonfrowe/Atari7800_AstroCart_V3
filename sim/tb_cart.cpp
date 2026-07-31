@@ -112,6 +112,8 @@ static void print_trace_usage() {
     std::cout << "Example:" << std::endl;
     std::cout << "  0xFFFC R 0x00 0 ? OUT" << std::endl;
     std::cout << "  0x4000 W 0x3F 0 ? IN" << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << "  --assert-boot   Require reset-vector, opcode-fetch, and MARIA DMA checkpoints" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -120,6 +122,7 @@ int main(int argc, char** argv) {
 
     std::string trace_path;
     std::string rom_hex_path = "cart_payload.hex";
+    bool assert_boot = false;
     for (int argi = 1; argi < argc; ++argi) {
         std::string arg = argv[argi];
         if (arg == "--trace") {
@@ -138,6 +141,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--trace-help") {
             print_trace_usage();
             return 0;
+        } else if (arg == "--assert-boot") {
+            assert_boot = true;
         }
     }
 
@@ -232,12 +237,31 @@ int main(int argc, char** argv) {
         int drive_mode_mismatches = 0;
         int maria_cycles = 0;
         int cpu_cycles = 0;
+        bool saw_reset_low = false;
+        bool saw_reset_high = false;
+        bool saw_maria_dma = false;
+        int cpu_opcode_reads_after_reset = 0;
+        bool count_opcode_reads = false;
 
         for (const auto& cycle : cycles) {
             top->halt = cycle.halt ? 0 : 1;
             if (cycle.halt) maria_cycles++;
             else cpu_cycles++;
             const uint8_t read_data = run_bus_cycle(cycle.addr, cycle.is_read, cycle.write_val);
+
+            if (!cycle.halt && cycle.is_read && cycle.addr == 0xFFFC) {
+                saw_reset_low = true;
+            } else if (saw_reset_low && !cycle.halt && cycle.is_read && cycle.addr == 0xFFFD) {
+                saw_reset_high = true;
+                count_opcode_reads = true;
+                cpu_opcode_reads_after_reset = 0;
+            } else if (count_opcode_reads && !cycle.halt && cycle.is_read && cycle.addr >= 0x4000) {
+                cpu_opcode_reads_after_reset++;
+            }
+
+            if (cycle.halt && cycle.is_read && cycle.addr >= 0x4000) {
+                saw_maria_dma = true;
+            }
 
             if (cycle.expect_drive_mode) {
                 const bool observed_output = (top->buf_dir != 0);
@@ -277,7 +301,17 @@ int main(int argc, char** argv) {
         assert(read_mismatches == 0 && "Trace replay detected ROM read mismatches!");
         assert(input_mode_violations == 0 && "Trace replay detected bus direction violations!");
         assert(drive_mode_mismatches == 0 && "Trace replay detected explicit drive-mode mismatches!");
+        if (assert_boot) {
+            assert(saw_reset_low && "Boot trace assertion failed: missing reset-vector low-byte read at $FFFC!");
+            assert(saw_reset_high && "Boot trace assertion failed: missing reset-vector high-byte read at $FFFD after $FFFC!");
+            assert(cpu_opcode_reads_after_reset >= 8 && "Boot trace assertion failed: fewer than 8 CPU cartridge reads after reset vector fetch!");
+            assert(saw_maria_dma && "Boot trace assertion failed: missing MARIA DMA read in cartridge space!");
+        }
         std::cout << "[TRACE] CPU cycles: " << cpu_cycles << ", MARIA cycles: " << maria_cycles << std::endl;
+        if (assert_boot) {
+            std::cout << "[TRACE] Boot assertions passed: reset-vector sequence, "
+                      << cpu_opcode_reads_after_reset << " CPU cartridge reads after reset, and MARIA DMA observed." << std::endl;
+        }
         std::cout << "[TRACE] Replay passed with no bus or data mismatches." << std::endl;
     };
 

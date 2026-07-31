@@ -6,6 +6,7 @@
 #   ./build.sh --sim              - Runs Verilator co-simulation test suite
 #   ./build.sh --sim-menu         - Runs Verilator harness against the prototype menu ROM
 #   ./build.sh --trace FILE       - Replays an external Atari bus trace against the default cart ROM
+#   ./build.sh --trace-boot FILE  - Replays an external Atari boot trace with boot assertions enabled
 #   ./build.sh --trace-menu FILE  - Replays an external Atari bus trace against the prototype menu ROM
 #   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
 #   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
@@ -55,6 +56,19 @@ run_trace_replay() {
     echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Bus Trace...${NC}"
     make -C sim trace TRACE_FILE="$trace_file"
     echo -e "${GREEN}✓ Trace Replay Passed Cleanly!${NC}"
+}
+
+run_boot_trace_replay() {
+    local trace_file="$1"
+    if [ -z "$trace_file" ]; then
+        echo -e "${RED}Error: --trace-boot requires a trace file path${NC}"
+        echo "Usage: ./build.sh --trace-boot sim/traces/a7800_boot.trace"
+        exit 1
+    fi
+
+    echo -e "\n${YELLOW}[Phase 1-4] Replaying External Atari Boot Trace With Assertions...${NC}"
+    make -C sim trace-boot TRACE_FILE="$trace_file"
+    echo -e "${GREEN}✓ Boot Trace Replay Passed Cleanly!${NC}"
 }
 
 run_menu_trace_replay() {
@@ -168,6 +182,9 @@ case "$MODE" in
     --trace)
         run_trace_replay "$TRACE_FILE"
         ;;
+    --trace-boot)
+        run_boot_trace_replay "$TRACE_FILE"
+        ;;
     --trace-menu)
         run_menu_trace_replay "$TRACE_FILE"
         ;;
@@ -180,7 +197,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-menu FILE | --gowin | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --all]"
         exit 1
         ;;
 esac

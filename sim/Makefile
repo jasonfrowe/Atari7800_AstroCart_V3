@@ -40,6 +40,7 @@ MENU_A78_FILE ?= ../menu/menu.bas.a78
 MENU_HEX_FILE ?= menu_payload.hex
 CONVERT_INPUT ?= traces/example_a7800_export.csv
 CONVERT_OUTPUT ?= traces/a7800_boot.trace
+TRACE_EXTRA_ARGS ?=
 
 VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -I$(RTL_DIR) \
@@ -48,7 +49,7 @@ VERILATOR_FLAGS = -Wall -Wno-fatal -Wno-CASEOVERLAP --cc --exe --trace \
                   -GFW_INIT_FILE=\"$(FW_HEX)\" \
                   --top-module $(V_TOP)
 
-.PHONY: all run trace menu-run menu-trace trace-convert clean
+.PHONY: all run trace trace-boot menu-run menu-trace trace-convert clean
 
 all: run
 
@@ -73,7 +74,11 @@ run: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
 
 trace: obj_dir/V$(V_TOP) rom_chunk_00.hex $(FW_HEX)
 	@echo "==> Replaying external Atari bus trace: $(TRACE_FILE)"
-	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE) --trace $(TRACE_FILE)
+	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE) --trace $(TRACE_FILE) $(TRACE_EXTRA_ARGS)
+
+trace-boot:
+	@echo "==> Replaying external Atari boot trace with boot assertions: $(TRACE_FILE)"
+	$(MAKE) trace TRACE_FILE=$(TRACE_FILE) TRACE_EXTRA_ARGS="--assert-boot"
 
 menu-run:
 	@echo "==> Executing Verilator simulation with menu ROM..."

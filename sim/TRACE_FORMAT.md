@@ -2,10 +2,13 @@
 
 The Verilator harness supports replaying Atari 7800 bus cycles captured from an external source such as an instrumented A7800 emulator.
 
+The recommended emulator-side export schema is defined in `sim/A7800_EXPORT_SCHEMA.md`.
+
 Run it with:
 
 ```bash
 make -C sim trace TRACE_FILE=traces/reset_vector.trace
+make -C sim trace-boot TRACE_FILE=traces/reset_vector.trace
 make -C sim trace A78_FILE=../menu/menu.bas.a78 HEX_FILE=menu_payload.hex TRACE_FILE=traces/reset_vector.trace
 python3 sim/a7800_trace_to_replay.py exported_bus.csv sim/traces/a7800_boot.trace
 make -C sim trace-convert CONVERT_INPUT=exported_bus.csv CONVERT_OUTPUT=traces/a7800_boot.trace
@@ -48,6 +51,14 @@ What replay currently checks:
 - Writes in cartridge space keep the transceiver in input mode.
 - Non-cartridge addresses do not put the cartridge in drive mode.
 - Optional `IN` / `OUT` tokens can pin down the expected transceiver direction per cycle.
+
+Minimum useful boot trace contents:
+
+- Reset vector reads at `$FFFC` and `$FFFD`
+- At least 8 subsequent CPU opcode fetch reads in cartridge space
+- At least 1 MARIA DMA read with `halt=1`
+
+If those checkpoints are present, use `make -C sim trace-boot TRACE_FILE=...` or `./build.sh --trace-boot ...` to enable the corresponding assertions in the replay harness.
 
 What replay does not yet do:
 

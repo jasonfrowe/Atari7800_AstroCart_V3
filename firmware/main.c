@@ -127,96 +127,27 @@ static uint16_t read_be_u16(const uint8_t *p) {
 int main(void) {
     uint8_t sector_buf[512];
 
-    // Initialize SD Card over SPI
-    sd_init();
-
-    // Read first sector containing A78 Cartridge Header
-    sd_read_sector(0, sector_buf);
-
-    // Decode 128-byte A78 Header per spec.
-    uint8_t  header_version = sector_buf[A78_OFF_VERSION];
-    uint32_t rom_bytes = read_be_u32(&sector_buf[A78_OFF_ROM_SIZE]);
-    if (rom_bytes == 0) rom_bytes = 49152; // Default to 48KB
-
-    uint16_t cart_type = read_be_u16(&sector_buf[A78_OFF_CART_TYPE]);
-    uint8_t  v4_mapper = sector_buf[A78_OFF_V4_MAPPER];
-    uint16_t v4_audio  = read_be_u16(&sector_buf[A78_OFF_V4_AUDIO]);
-
-    uint8_t mapper_type = 0; // 0=Flat 48K, 1=SuperGame, 2=Flat 32K
-    if (header_version >= 4) {
-        if (v4_mapper == V4_MAPPER_SUPERGAME) {
-            mapper_type = 1;
-        } else if (v4_mapper == V4_MAPPER_LINEAR && rom_bytes <= 32768u) {
-            mapper_type = 2;
-        }
-    } else {
-        if (cart_type & CART_FLAG_SUPERGAME) {
-            mapper_type = 1;
-        } else if (rom_bytes <= 32768u) {
-            mapper_type = 2;
-        }
+    // Stage 1 isolated gate: SPI + SD init + one sector read only.
+    if (sd_init() != 0) {
+        while (1) {}
     }
 
-    uint8_t pokey_present = 0;
-    uint8_t pokey_addr_sel = POKEY_ADDR_4000;
-    if (header_version >= 4) {
-        uint16_t pokey_mode = (v4_audio & V4_AUDIO_POKEY_MASK);
-        if (pokey_mode == V4_AUDIO_POKEY_4000) {
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_4000;
-        } else if (pokey_mode == V4_AUDIO_POKEY_450 || pokey_mode == V4_AUDIO_POKEY_450_440) {
-            // For combined @450+@440, use @450 (current RTL does not implement @440).
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_450;
-        } else if (pokey_mode == V4_AUDIO_POKEY_800) {
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_800;
-        } else if (pokey_mode == V4_AUDIO_POKEY_440) {
-            // Unsupported location in current RTL; leave disabled.
-            pokey_present = 0u;
-        }
-    } else {
-        if (cart_type & CART_FLAG_POKEY_4000) {
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_4000;
-        } else if (cart_type & CART_FLAG_POKEY_450) {
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_450;
-        } else if (cart_type & CART_FLAG_POKEY_800) {
-            pokey_present = 1u;
-            pokey_addr_sel = POKEY_ADDR_800;
-        } else if (cart_type & CART_FLAG_POKEY_440) {
-            // Unsupported location in current RTL; leave disabled.
-            pokey_present = 0u;
-        }
+    if (sd_read_sector(0, sector_buf) != 0) {
+        while (1) {}
     }
 
-    // Stream ROM Payload (skipping 128-byte header) into FPGA Cartridge RAM
-    volatile uint8_t *cart_ram = (volatile uint8_t *)CART_RAM_BASE;
-
-    // Copy remaining bytes of first sector after 128-byte header.
-    uint32_t copied = 0;
-    for (uint32_t i = A78_HEADER_SIZE; i < 512u && copied < rom_bytes; i++) {
-        *cart_ram++ = sector_buf[i];
-        copied++;
+    // Stage 2 isolated gate: issue explicit CMD17 probe to VBR sector LBA 2048.
+    if (sd_cmd(17, 2048, 0xFF) != 0x00) {
+        while (1) {}
     }
+    spi_set_cs(1);
+    spi_transfer(0xFF);
 
-    // Read remaining sectors, copying exactly rom_bytes payload bytes.
-    for (uint32_t sec = 1; copied < rom_bytes; sec++) {
-        sd_read_sector(sec, sector_buf);
-        for (uint32_t i = 0; i < 512u && copied < rom_bytes; i++) {
-            *cart_ram++ = sector_buf[i];
-            copied++;
-        }
-    }
-
-    // Configure Cartridge CSR: [7:4]=mapper_type, [2:1]=pokey_addr_sel, [0]=pokey_enable
-    CART_CSR_CTRL = ((uint32_t)(mapper_type & 0x0F) << 4)
-                  | ((uint32_t)(pokey_addr_sel & 0x03) << 1)
-                  | (uint32_t)(pokey_present & 0x01);
+    volatile uint8_t sink = (uint8_t)(sector_buf[510] ^ sector_buf[511]);
+    (void)sink;
 
     while (1) {
-        // Idle loop / Wait for user selection
+        // Stage 1 complete.
     }
 
     return 0;

@@ -12,6 +12,8 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
+#include <cstring>
 #include "Vatari_cart_top.h"
 #include "Vatari_cart_top___024root.h"
 #include "verilated.h"
@@ -117,6 +119,174 @@ static void print_trace_usage() {
     std::cout << "  --assert-boot   Require reset-vector, opcode-fetch, and MARIA DMA checkpoints" << std::endl;
 }
 
+struct SimSDCard {
+    std::map<uint32_t, std::vector<uint8_t>> sectors;
+    uint8_t mosi_shift = 0;
+    int bit_count = 0;
+    std::vector<uint8_t> cmd_bytes;
+    std::vector<uint8_t> tx_buffer;
+    size_t tx_idx = 0;
+    bool last_clk = false;
+    int tx_bit_cnt = 0;
+    uint8_t current_tx_byte = 0xFF;
+    bool current_miso = 1;
+
+    bool saw_cmd0 = false;
+    bool saw_cmd8 = false;
+    bool saw_cmd55 = false;
+    bool saw_cmd41 = false;
+    bool saw_cmd17 = false;
+    bool saw_cmd17_lba0 = false;
+    bool saw_cmd17_lba2048 = false;
+    uint32_t last_cmd17_arg = 0;
+
+    SimSDCard() {
+        std::vector<uint8_t> mbr(512, 0);
+        mbr[0x1BE + 4] = 0x0C;
+        mbr[0x1BE + 8] = 0x00;
+        mbr[0x1BE + 9] = 0x08;
+        mbr[0x1BE + 10] = 0x00;
+        mbr[0x1BE + 11] = 0x00;
+        mbr[510] = 0x55;
+        mbr[511] = 0xAA;
+        sectors[0] = mbr;
+
+        std::vector<uint8_t> vbr(512, 0);
+        vbr[11] = 0x00;
+        vbr[12] = 0x02;
+        vbr[13] = 1;
+        vbr[14] = 32;
+        vbr[15] = 0;
+        vbr[16] = 2;
+        vbr[36] = 100;
+        vbr[37] = 0;
+        vbr[38] = 0;
+        vbr[39] = 0;
+        vbr[44] = 2;
+        vbr[45] = 0;
+        vbr[46] = 0;
+        vbr[47] = 0;
+        vbr[510] = 0x55;
+        vbr[511] = 0xAA;
+        sectors[2048] = vbr;
+    }
+
+    void update(bool clk, bool cs, bool mosi, bool& miso) {
+        if (cs) {
+            last_clk = clk;
+            bit_count = 0;
+            current_miso = 1;
+            miso = 1;
+            tx_buffer.clear();
+            tx_idx = 0;
+            cmd_bytes.clear();
+            tx_bit_cnt = 0;
+            current_tx_byte = 0xFF;
+            return;
+        }
+
+        if (clk && !last_clk) {
+            if (tx_bit_cnt > 0) {
+                current_miso = (current_tx_byte & 0x80) ? 1 : 0;
+                current_tx_byte <<= 1;
+                tx_bit_cnt--;
+            } else if (!tx_buffer.empty() && tx_idx < tx_buffer.size()) {
+                current_tx_byte = tx_buffer[tx_idx++];
+                current_miso = (current_tx_byte & 0x80) ? 1 : 0;
+                current_tx_byte <<= 1;
+                tx_bit_cnt = 7;
+                if (tx_idx >= tx_buffer.size()) {
+                    tx_buffer.clear();
+                    tx_idx = 0;
+                }
+            } else {
+                current_miso = 1;
+            }
+        }
+
+        if (!clk && last_clk) {
+            mosi_shift = (mosi_shift << 1) | (mosi ? 1 : 0);
+            bit_count++;
+            if (bit_count == 8) {
+                process_spi_byte(mosi_shift);
+                bit_count = 0;
+            }
+        }
+
+        miso = current_miso;
+        last_clk = clk;
+    }
+
+    void process_spi_byte(uint8_t rx) {
+        if (!tx_buffer.empty()) {
+            if (cmd_bytes.empty() && ((rx & 0xC0) == 0x40)) {
+                tx_buffer.clear();
+                tx_idx = 0;
+                tx_bit_cnt = 0;
+            } else {
+                return;
+            }
+        }
+
+        if (cmd_bytes.empty() && (rx & 0xC0) != 0x40) {
+            return;
+        }
+
+        cmd_bytes.push_back(rx);
+        if (cmd_bytes.size() != 6) {
+            return;
+        }
+
+        uint8_t cmd = cmd_bytes[0] & 0x3F;
+        uint32_t arg = (uint32_t(cmd_bytes[1]) << 24)
+                     | (uint32_t(cmd_bytes[2]) << 16)
+                     | (uint32_t(cmd_bytes[3]) << 8)
+                     | uint32_t(cmd_bytes[4]);
+        cmd_bytes.clear();
+
+        std::cout << " [SimSD] CMD" << (int)cmd << " arg=0x" << std::hex << arg << std::dec << std::endl;
+
+        tx_buffer.clear();
+        tx_idx = 0;
+
+        if (cmd == 0) {
+            saw_cmd0 = true;
+            tx_buffer.push_back(0x01);
+        } else if (cmd == 8) {
+            saw_cmd8 = true;
+            tx_buffer.push_back(0x01);
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0x01);
+            tx_buffer.push_back(0xAA);
+        } else if (cmd == 55) {
+            saw_cmd55 = true;
+            tx_buffer.push_back(0x01);
+        } else if (cmd == 41) {
+            saw_cmd41 = true;
+            tx_buffer.push_back(0x00);
+        } else if (cmd == 17) {
+            saw_cmd17 = true;
+            last_cmd17_arg = arg;
+            if (arg == 0u) saw_cmd17_lba0 = true;
+            if (arg == 2048u) saw_cmd17_lba2048 = true;
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0xFF);
+            tx_buffer.push_back(0xFE);
+            auto it = sectors.find(arg);
+            if (it != sectors.end()) {
+                tx_buffer.insert(tx_buffer.end(), it->second.begin(), it->second.end());
+            } else {
+                tx_buffer.insert(tx_buffer.end(), 512, 0xFF);
+            }
+            tx_buffer.push_back(0xFF);
+            tx_buffer.push_back(0xFF);
+        } else {
+            tx_buffer.push_back(0x00);
+        }
+    }
+};
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Verilated::traceEverOn(true);
@@ -194,6 +364,7 @@ int main(int argc, char** argv) {
     top->rw = 1;
     top->a = 0x0000;
     top->halt = 1;
+    SimSDCard sd_card_sim;
     top->sd_miso = 1;
 
     uint8_t current_write_val = 0;
@@ -204,6 +375,12 @@ int main(int argc, char** argv) {
         }
         top->clk = !top->clk;
         top->eval();
+
+        bool miso_bit = 1;
+        sd_card_sim.update(top->sd_clk, top->sd_cs, top->sd_mosi, miso_bit);
+        top->sd_miso = miso_bit ? 1 : 0;
+        top->eval();
+
         tfp->dump(main_time);
         main_time += 18518; // Half cycle of 27 MHz clock (~18.5 ns)
     };
@@ -351,6 +528,64 @@ int main(int argc, char** argv) {
     std::cout << "[SIM] Clocking internal Power-On Reset (POR) generator (~4096 cycles)..." << std::endl;
     for (int i = 0; i < 9000; i++) tick();
     std::cout << "[SIM] Internal POR sequence complete. FPGA Core Active." << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0] Stage 1 SD SPI Command Bring-up
+    // ------------------------------------------------------------------------
+    std::cout << "\n[TEST 0] Testing Stage 1 SD SPI Command Bring-up..." << std::endl;
+    int sd_clk_edges = 0;
+    int sd_cs_low_ticks = 0;
+    int sd_mosi_high_ticks = 0;
+    int prev_sd_clk = top->sd_clk;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        if (sd_card_sim.saw_cmd0 && sd_card_sim.saw_cmd8 && sd_card_sim.saw_cmd55 &&
+            sd_card_sim.saw_cmd41 && sd_card_sim.saw_cmd17) {
+            break;
+        }
+        tick();
+        if (top->sd_cs == 0) {
+            sd_cs_low_ticks++;
+        }
+        if (top->sd_mosi != 0) {
+            sd_mosi_high_ticks++;
+        }
+        if (top->sd_clk != prev_sd_clk) {
+            sd_clk_edges++;
+            prev_sd_clk = top->sd_clk;
+        }
+    }
+    std::cout << " -> CMD0=" << (sd_card_sim.saw_cmd0 ? "yes" : "no")
+              << " CMD8=" << (sd_card_sim.saw_cmd8 ? "yes" : "no")
+              << " CMD55=" << (sd_card_sim.saw_cmd55 ? "yes" : "no")
+              << " ACMD41=" << (sd_card_sim.saw_cmd41 ? "yes" : "no")
+              << " CMD17=" << (sd_card_sim.saw_cmd17 ? "yes" : "no")
+              << " arg=0x" << std::hex << sd_card_sim.last_cmd17_arg << std::dec
+              << std::endl;
+    std::cout << " -> SD pins: clk_edges=" << sd_clk_edges
+              << " cs_low_ticks=" << sd_cs_low_ticks
+              << " mosi_high_ticks=" << sd_mosi_high_ticks
+              << std::endl;
+    assert(sd_card_sim.saw_cmd0 && "Stage 1 failed: CMD0 not observed");
+    assert(sd_card_sim.saw_cmd8 && "Stage 1 failed: CMD8 not observed");
+    assert(sd_card_sim.saw_cmd55 && "Stage 1 failed: CMD55 not observed");
+    assert(sd_card_sim.saw_cmd41 && "Stage 1 failed: ACMD41 not observed");
+    assert(sd_card_sim.saw_cmd17 && "Stage 1 failed: CMD17 not observed");
+    assert(sd_card_sim.last_cmd17_arg == 0 && "Stage 1 failed: first CMD17 arg was not LBA 0");
+    std::cout << " -> Stage 1 SD SPI command gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.1] Stage 2 SD Sector Probe (LBA 2048)
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.1] Testing Stage 2 SD Sector Probe (LBA 2048)..." << std::endl;
+    for (int timeout = 0; timeout < 200000 && !sd_card_sim.saw_cmd17_lba2048; timeout++) {
+        tick();
+    }
+    std::cout << " -> CMD17 LBA0=" << (sd_card_sim.saw_cmd17_lba0 ? "yes" : "no")
+              << " CMD17 LBA2048=" << (sd_card_sim.saw_cmd17_lba2048 ? "yes" : "no")
+              << std::endl;
+    assert(sd_card_sim.saw_cmd17_lba0 && "Stage 2 failed: CMD17 for LBA 0 not observed");
+    assert(sd_card_sim.saw_cmd17_lba2048 && "Stage 2 failed: CMD17 for LBA 2048 not observed");
+    std::cout << " -> Stage 2 SD sector probe gate PASSED!" << std::endl;
 
     if (!trace_path.empty()) {
         const auto trace_cycles = load_trace_cycles(trace_path);

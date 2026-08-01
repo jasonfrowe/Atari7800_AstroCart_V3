@@ -126,6 +126,8 @@ static uint16_t read_be_u16(const uint8_t *p) {
 // A78 Header Parser & Loader
 int main(void) {
     uint8_t sector_buf[512];
+    uint8_t vbr_buf[512];
+    uint8_t token;
 
     // Stage 1 isolated gate: SPI + SD init + one sector read only.
     if (sd_init() != 0) {
@@ -140,10 +142,30 @@ int main(void) {
     if (sd_cmd(17, 2048, 0xFF) != 0x00) {
         while (1) {}
     }
+
+    // Stage 3 isolated gate: complete full token/data/CRC transfer for LBA 2048.
+    token = 0xFF;
+    for (int i = 0; i < 10000; i++) {
+        token = spi_transfer(0xFF);
+        if (token == 0xFE) break;
+    }
+    if (token != 0xFE) {
+        while (1) {}
+    }
+
+    for (int i = 0; i < 512; i++) {
+        vbr_buf[i] = spi_transfer(0xFF);
+    }
+    spi_transfer(0xFF);
+    spi_transfer(0xFF);
     spi_set_cs(1);
     spi_transfer(0xFF);
 
-    volatile uint8_t sink = (uint8_t)(sector_buf[510] ^ sector_buf[511]);
+    volatile uint8_t sink = (uint8_t)(
+        sector_buf[510] ^ sector_buf[511] ^
+        vbr_buf[11] ^ vbr_buf[12] ^ vbr_buf[13] ^
+        vbr_buf[14] ^ vbr_buf[15] ^ vbr_buf[16]
+    );
     (void)sink;
 
     while (1) {

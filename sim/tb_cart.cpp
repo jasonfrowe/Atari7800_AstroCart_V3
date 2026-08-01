@@ -139,6 +139,10 @@ struct SimSDCard {
     bool saw_cmd17_lba0 = false;
     bool saw_cmd17_lba2048 = false;
     uint32_t last_cmd17_arg = 0;
+    bool observed_vbr_bpb = false;
+    bool completed_cmd17_lba2048_payload = false;
+    bool active_cmd17_payload = false;
+    uint32_t active_cmd17_lba = 0;
 
     SimSDCard() {
         std::vector<uint8_t> mbr(512, 0);
@@ -196,6 +200,11 @@ struct SimSDCard {
                 current_tx_byte <<= 1;
                 tx_bit_cnt = 7;
                 if (tx_idx >= tx_buffer.size()) {
+                    if (active_cmd17_payload && active_cmd17_lba == 2048u) {
+                        completed_cmd17_lba2048_payload = true;
+                    }
+                    active_cmd17_payload = false;
+                    active_cmd17_lba = 0;
                     tx_buffer.clear();
                     tx_idx = 0;
                 }
@@ -270,12 +279,25 @@ struct SimSDCard {
             last_cmd17_arg = arg;
             if (arg == 0u) saw_cmd17_lba0 = true;
             if (arg == 2048u) saw_cmd17_lba2048 = true;
+            active_cmd17_payload = true;
+            active_cmd17_lba = arg;
             tx_buffer.push_back(0x00);
             tx_buffer.push_back(0xFF);
             tx_buffer.push_back(0xFE);
             auto it = sectors.find(arg);
             if (it != sectors.end()) {
                 tx_buffer.insert(tx_buffer.end(), it->second.begin(), it->second.end());
+                if (arg == 2048u) {
+                    const std::vector<uint8_t>& sec = it->second;
+                    if (sec.size() >= 48u &&
+                        sec[11] == 0x00 && sec[12] == 0x02 &&
+                        sec[13] == 0x01 &&
+                        sec[14] == 0x20 && sec[15] == 0x00 &&
+                        sec[16] == 0x02 &&
+                        sec[44] == 0x02 && sec[45] == 0x00 && sec[46] == 0x00 && sec[47] == 0x00) {
+                        observed_vbr_bpb = true;
+                    }
+                }
             } else {
                 tx_buffer.insert(tx_buffer.end(), 512, 0xFF);
             }
@@ -586,6 +608,19 @@ int main(int argc, char** argv) {
     assert(sd_card_sim.saw_cmd17_lba0 && "Stage 2 failed: CMD17 for LBA 0 not observed");
     assert(sd_card_sim.saw_cmd17_lba2048 && "Stage 2 failed: CMD17 for LBA 2048 not observed");
     std::cout << " -> Stage 2 SD sector probe gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.2] Stage 3 VBR Payload Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.2] Testing Stage 3 VBR Payload Validation..." << std::endl;
+    for (int timeout = 0; timeout < 200000 && !sd_card_sim.completed_cmd17_lba2048_payload; timeout++) {
+        tick();
+    }
+    std::cout << " -> observed_vbr_bpb=" << (sd_card_sim.observed_vbr_bpb ? "yes" : "no") << std::endl;
+    std::cout << " -> completed_cmd17_lba2048_payload=" << (sd_card_sim.completed_cmd17_lba2048_payload ? "yes" : "no") << std::endl;
+    assert(sd_card_sim.observed_vbr_bpb && "Stage 3 failed: expected FAT32 BPB bytes were not observed on LBA 2048 payload");
+    assert(sd_card_sim.completed_cmd17_lba2048_payload && "Stage 3 failed: CMD17 LBA2048 payload stream did not complete");
+    std::cout << " -> Stage 3 VBR payload gate PASSED!" << std::endl;
 
     if (!trace_path.empty()) {
         const auto trace_cycles = load_trace_cycles(trace_path);

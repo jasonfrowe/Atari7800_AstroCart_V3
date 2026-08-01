@@ -117,6 +117,201 @@ static void print_trace_usage() {
     std::cout << "  --assert-boot   Require reset-vector, opcode-fetch, and MARIA DMA checkpoints" << std::endl;
 }
 
+#include <map>
+#include <cstring>
+
+struct SimSDCard {
+    std::map<uint32_t, std::vector<uint8_t>> sectors;
+    uint8_t mosi_shift = 0;
+    uint8_t miso_shift = 0xFF;
+    int bit_count = 0;
+    std::vector<uint8_t> cmd_bytes;
+    std::vector<uint8_t> tx_buffer;
+    size_t tx_idx = 0;
+    bool last_clk = false;
+
+    SimSDCard() {
+        // Sector 0: MBR
+        std::vector<uint8_t> mbr(512, 0);
+        mbr[0x1BE + 4] = 0x0C; // FAT32
+        mbr[0x1BE + 8] = 0x00; // LBA 2048 (0x00000800)
+        mbr[0x1BE + 9] = 0x08;
+        mbr[0x1BE + 10] = 0x00;
+        mbr[0x1BE + 11] = 0x00;
+        mbr[510] = 0x55; mbr[511] = 0xAA;
+        sectors[0] = mbr;
+
+        // Sector 2048: VBR (FAT32 BPB)
+        std::vector<uint8_t> vbr(512, 0);
+        vbr[11] = 0x00; vbr[12] = 0x02; // 512 bytes/sec
+        vbr[13] = 1;                    // 1 sec/clus
+        vbr[14] = 32; vbr[15] = 0;      // 32 reserved sectors
+        vbr[16] = 2;                    // 2 FATs
+        vbr[36] = 100; vbr[37] = 0; vbr[38] = 0; vbr[39] = 0; // 100 sec/FAT
+        vbr[44] = 2;   vbr[45] = 0; vbr[46] = 0; vbr[47] = 0; // root clus = 2
+        vbr[510] = 0x55; vbr[511] = 0xAA;
+        sectors[2048] = vbr;
+
+        // Sector 2280: Root Directory (Cluster 2)
+        std::vector<uint8_t> root_dir(512, 0);
+        struct GameEntry {
+            char name83[11];
+            uint16_t clus;
+        } games[8] = {
+            {{'A','S','T','R','O','W','I','N','A','7','8'}, 3},
+            {{'C','H','O','P','L','I','F','T','A','7','8'}, 4},
+            {{'C','O','M','M','A','N','D','O','A','7','8'}, 5},
+            {{'F','O','O','D','F','I','G','H','A','7','8'}, 6},
+            {{'I','M','P','O','S','S','I','B','A','7','8'}, 7},
+            {{'J','I','N','K','S',' ',' ',' ','A','7','8'}, 8},
+            {{'T','I','G','E','R','H','E','L','A','7','8'}, 9},
+            {{'A','R','T','I','F','I','N','A','A','7','8'}, 10}
+        };
+
+        for (int i = 0; i < 8; ++i) {
+            uint8_t* entry = &root_dir[i * 32];
+            std::memcpy(entry, games[i].name83, 11);
+            entry[11] = 0x20; // Archive file attribute
+            entry[20] = 0; entry[21] = 0; // High cluster
+            entry[26] = games[i].clus & 0xFF; // Low cluster
+            entry[27] = (games[i].clus >> 8) & 0xFF;
+            entry[28] = 0x00; entry[29] = 0x80; entry[30] = 0x00; entry[31] = 0x00; // 32KB size
+        }
+        sectors[2280] = root_dir;
+
+        // Sectors 2281..2288: A78 Headers
+        const char* titles[8] = {
+            "ASTRO WING                      ",
+            "CHOPLIFTER                      ",
+            "COMMANDO                        ",
+            "FOOD FIGHT                      ",
+            "IMPOSSIBLE MISSION              ",
+            "JINKS                           ",
+            "TIGER-HELI                      ",
+            "ARTI DIGITAL EDITION            "
+        };
+
+        for (int i = 0; i < 8; ++i) {
+            std::vector<uint8_t> hdr(512, 0);
+            hdr[0] = 4; // Version 4
+            std::memcpy(&hdr[1], "ATARI7800", 9);
+            std::memcpy(&hdr[10], titles[i], 32);
+            hdr[49] = 0; hdr[50] = 0; hdr[51] = 0xC0; hdr[52] = 0x00; // 48KB
+            hdr[64] = 0; // Linear mapper
+            hdr[66] = 0x00; hdr[67] = 0x02; // POKEY @ $0450
+            sectors[2281 + i] = hdr;
+        }
+    }
+
+    int tx_bit_cnt = 0;
+    uint8_t current_tx_byte = 0xFF;
+    bool current_miso = 1;
+
+    void update(bool clk, bool cs, bool mosi, bool& miso) {
+        if (cs) {
+            last_clk = clk;
+            bit_count = 0;
+            current_miso = 1;
+            miso = 1;
+            tx_buffer.clear();
+            tx_idx = 0;
+            cmd_bytes.clear();
+            tx_bit_cnt = 0;
+            current_tx_byte = 0xFF;
+            return;
+        }
+
+        // Rising clock edge: drive MISO
+        if (clk && !last_clk) {
+            if (tx_bit_cnt > 0) {
+                current_miso = (current_tx_byte & 0x80) ? 1 : 0;
+                current_tx_byte <<= 1;
+                tx_bit_cnt--;
+            } else if (!tx_buffer.empty() && tx_idx < tx_buffer.size()) {
+                current_tx_byte = tx_buffer[tx_idx++];
+                current_miso = (current_tx_byte & 0x80) ? 1 : 0;
+                current_tx_byte <<= 1;
+                tx_bit_cnt = 7;
+                if (tx_idx >= tx_buffer.size()) {
+                    tx_buffer.clear();
+                    tx_idx = 0;
+                }
+            } else {
+                current_miso = 1;
+            }
+        }
+
+        // Falling clock edge: sample MOSI
+        if (!clk && last_clk) {
+            mosi_shift = (mosi_shift << 1) | (mosi ? 1 : 0);
+            bit_count++;
+
+            if (bit_count == 8) {
+                uint8_t rx_byte = mosi_shift;
+                bit_count = 0;
+                process_spi_byte(rx_byte);
+            }
+        }
+
+        miso = current_miso;
+        last_clk = clk;
+    }
+
+    void process_spi_byte(uint8_t rx) {
+        std::cout << "[SimSD_RX_BYTE] 0x" << std::hex << (int)rx << std::dec << std::endl;
+
+        if (!tx_buffer.empty()) {
+            return;
+        }
+
+        if (cmd_bytes.empty() && (rx & 0xC0) != 0x40) {
+            return;
+        }
+
+        cmd_bytes.push_back(rx);
+        if (cmd_bytes.size() == 6) {
+            uint8_t cmd = cmd_bytes[0] & 0x3F;
+            uint32_t arg = (uint32_t(cmd_bytes[1]) << 24) | (uint32_t(cmd_bytes[2]) << 16) |
+                           (uint32_t(cmd_bytes[3]) << 8) | uint32_t(cmd_bytes[4]);
+            cmd_bytes.clear();
+
+            std::cout << " [SimSD] Received CMD" << (int)cmd << " arg=0x" << std::hex << arg << std::dec << std::endl << std::flush;
+
+            tx_buffer.clear();
+            tx_idx = 0;
+
+            if (cmd == 0) { // CMD0
+                tx_buffer.push_back(0x01);
+            } else if (cmd == 8) { // CMD8
+                tx_buffer.push_back(0x01);
+                tx_buffer.push_back(0x00);
+                tx_buffer.push_back(0x00);
+                tx_buffer.push_back(0x01);
+                tx_buffer.push_back(0xAA);
+            } else if (cmd == 55) { // CMD55
+                tx_buffer.push_back(0x01);
+            } else if (cmd == 41) { // ACMD41
+                tx_buffer.push_back(0x00);
+            } else if (cmd == 17) { // CMD17 (Read Sector)
+                tx_buffer.push_back(0x00); // R1 response
+                tx_buffer.push_back(0xFF); // Delay byte
+                tx_buffer.push_back(0xFE); // Data token
+
+                auto it = sectors.find(arg);
+                if (it != sectors.end()) {
+                    tx_buffer.insert(tx_buffer.end(), it->second.begin(), it->second.end());
+                } else {
+                    tx_buffer.insert(tx_buffer.end(), 512, 0xFF);
+                }
+                tx_buffer.push_back(0xFF); // CRC 1
+                tx_buffer.push_back(0xFF); // CRC 2
+            } else {
+                tx_buffer.push_back(0x00);
+            }
+        }
+    }
+};
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Verilated::traceEverOn(true);
@@ -194,6 +389,7 @@ int main(int argc, char** argv) {
     top->rw = 1;
     top->a = 0x0000;
     top->halt = 1;
+    SimSDCard sd_card_sim;
     top->sd_miso = 1;
 
     uint8_t current_write_val = 0;
@@ -202,8 +398,15 @@ int main(int argc, char** argv) {
         if (top->rw == 0) {
             top->d = current_write_val;
         }
+
         top->clk = !top->clk;
         top->eval();
+
+        bool miso_bit = 1;
+        sd_card_sim.update(top->sd_clk, top->sd_cs, top->sd_mosi, miso_bit);
+        top->sd_miso = miso_bit ? 1 : 0;
+        top->eval();
+
         tfp->dump(main_time);
         main_time += 18518; // Half cycle of 27 MHz clock (~18.5 ns)
     };
@@ -351,6 +554,35 @@ int main(int argc, char** argv) {
     std::cout << "[SIM] Clocking internal Power-On Reset (POR) generator (~4096 cycles)..." << std::endl;
     for (int i = 0; i < 9000; i++) tick();
     std::cout << "[SIM] Internal POR sequence complete. FPGA Core Active." << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0] MicroSD SPI FAT32 Directory & Title Loading ($E800 - $E8FF)
+    // ------------------------------------------------------------------------
+    std::cout << "\n[TEST 0] Testing MicroSD SPI FAT32 Directory & Title Loading ($E800 - $E8FF)..." << std::endl;
+    std::cout << "[SIM] Clocking Hazard5 RISC-V softcore for SD SPI & FAT32 directory parse..." << std::endl;
+    uint8_t status_byte = 0;
+    for (int timeout = 0; timeout < 500000; timeout++) {
+        status_byte = run_bus_cycle(0x7FF0, true);
+        if (status_byte & 0x80) break;
+    }
+    std::cout << " -> Status Register Read [$7FF0]: 0x" << std::hex << (int)status_byte << std::endl;
+    assert((status_byte & 0x80) != 0 && "Status register $7FF0 bit 7 was not set by Hazard5!");
+
+    char slot0_title[33] = {0};
+    for (int i = 0; i < 32; i++) {
+        slot0_title[i] = (char)run_bus_cycle(0xE800 + i, true);
+    }
+    std::cout << " -> Menu Slot 0 Title [$E800]: \"" << slot0_title << "\"" << std::endl;
+    assert(std::string(slot0_title).find("ASTRO WING") != std::string::npos && "Slot 0 title mismatch!");
+
+    char slot1_title[33] = {0};
+    for (int i = 0; i < 32; i++) {
+        slot1_title[i] = (char)run_bus_cycle(0xE820 + i, true);
+    }
+    std::cout << " -> Menu Slot 1 Title [$E820]: \"" << slot1_title << "\"" << std::endl;
+    assert(std::string(slot1_title).find("CHOPLIFTER") != std::string::npos && "Slot 1 title mismatch!");
+
+    std::cout << " -> MicroSD SPI FAT32 Directory & Title Engine TEST PASSED!" << std::endl;
 
     if (!trace_path.empty()) {
         const auto trace_cycles = load_trace_cycles(trace_path);

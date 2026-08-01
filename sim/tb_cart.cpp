@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <map>
 #include <cstring>
-#include <array>
 #include "Vatari_cart_top.h"
 #include "Vatari_cart_top___024root.h"
 #include "verilated.h"
@@ -141,11 +140,13 @@ struct SimSDCard {
     bool saw_cmd17_lba2048 = false;
     bool saw_cmd17_lba2080 = false;
     bool saw_cmd17_lba2280 = false;
+    bool saw_cmd17_lba2281 = false;
     uint32_t last_cmd17_arg = 0;
     bool observed_vbr_bpb = false;
     bool completed_cmd17_lba2048_payload = false;
     bool completed_cmd17_lba2080_payload = false;
     bool completed_cmd17_lba2280_payload = false;
+    bool completed_cmd17_lba2281_payload = false;
     bool active_cmd17_payload = false;
     uint32_t active_cmd17_lba = 0;
 
@@ -203,6 +204,13 @@ struct SimSDCard {
         root_dir[30] = 0x00;
         root_dir[31] = 0x00;
         sectors[2280] = root_dir;
+
+        std::vector<uint8_t> file0(512, 0);
+        file0[0] = 'F';
+        file0[1] = 'I';
+        file0[2] = 'L';
+        file0[3] = 'E';
+        sectors[2281] = file0;
     }
 
     void update(bool clk, bool cs, bool mosi, bool& miso) {
@@ -238,6 +246,9 @@ struct SimSDCard {
                     }
                     if (active_cmd17_payload && active_cmd17_lba == 2280u) {
                         completed_cmd17_lba2280_payload = true;
+                    }
+                    if (active_cmd17_payload && active_cmd17_lba == 2281u) {
+                        completed_cmd17_lba2281_payload = true;
                     }
                     active_cmd17_payload = false;
                     active_cmd17_lba = 0;
@@ -317,6 +328,7 @@ struct SimSDCard {
             if (arg == 2048u) saw_cmd17_lba2048 = true;
             if (arg == 2080u) saw_cmd17_lba2080 = true;
             if (arg == 2280u) saw_cmd17_lba2280 = true;
+            if (arg == 2281u) saw_cmd17_lba2281 = true;
             active_cmd17_payload = true;
             active_cmd17_lba = arg;
             tx_buffer.push_back(0x00);
@@ -696,60 +708,53 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------------------
     std::cout << "[TEST 0.3] Testing Stage 4 BPB Parse Addressing Validation..." << std::endl;
     bool stage4_phi2 = false;
-    uint8_t stage4_max_status = top->rootp->atari_cart_top__DOT__soc_status_val;
-    int stage4_core_reset_falls = 0;
-    int stage4_prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
-    std::array<bool, 256> stage4_status_seen{};
-    stage4_status_seen[top->rootp->atari_cart_top__DOT__soc_status_val] = true;
     for (int timeout = 0; timeout < 200000; timeout++) {
         stage4_phi2 = !stage4_phi2;
         top->phi2 = stage4_phi2 ? 1 : 0;
         tick();
         const uint8_t cur_status = top->rootp->atari_cart_top__DOT__soc_status_val;
-        stage4_status_seen[cur_status] = true;
         if (sd_card_sim.completed_cmd17_lba2080_payload &&
             sd_card_sim.completed_cmd17_lba2280_payload &&
-            cur_status == 0x18) {
+            cur_status >= 0x18) {
             break;
         }
-        if (cur_status > stage4_max_status) {
-            stage4_max_status = cur_status;
-        }
-        if (stage4_prev_core_rst_n == 1 && top->rootp->atari_cart_top__DOT__core_rst_n == 0) {
-            stage4_core_reset_falls++;
-        }
-        stage4_prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
     }
     const uint8_t stage_status = top->rootp->atari_cart_top__DOT__soc_status_val;
     std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage_status << std::dec << std::endl;
-    std::cout << " -> firmware_stage_status_max=0x" << std::hex << (int)stage4_max_status << std::dec << std::endl;
-    std::cout << " -> stage4_core_reset_falls=" << stage4_core_reset_falls << std::endl;
-    std::cout << " -> seen[0x14/0x15/0x16/0x17/0x18]="
-              << (stage4_status_seen[0x14] ? "y" : "n") << "/"
-              << (stage4_status_seen[0x15] ? "y" : "n") << "/"
-              << (stage4_status_seen[0x16] ? "y" : "n") << "/"
-              << (stage4_status_seen[0x17] ? "y" : "n") << "/"
-              << (stage4_status_seen[0x18] ? "y" : "n")
-              << std::endl;
-    std::cout << " -> seen[0xD4/0xE5/0xE6/0xE7/0xE8]="
-              << (stage4_status_seen[0xD4] ? "y" : "n") << "/"
-              << (stage4_status_seen[0xE5] ? "y" : "n") << "/"
-              << (stage4_status_seen[0xE6] ? "y" : "n") << "/"
-              << (stage4_status_seen[0xE7] ? "y" : "n") << "/"
-              << (stage4_status_seen[0xE8] ? "y" : "n")
-              << std::endl;
     std::cout << " -> CMD17 LBA2080=" << (sd_card_sim.saw_cmd17_lba2080 ? "yes" : "no")
               << " payload=" << (sd_card_sim.completed_cmd17_lba2080_payload ? "yes" : "no")
               << std::endl;
     std::cout << " -> CMD17 LBA2280=" << (sd_card_sim.saw_cmd17_lba2280 ? "yes" : "no")
               << " payload=" << (sd_card_sim.completed_cmd17_lba2280_payload ? "yes" : "no")
               << std::endl;
-    assert(stage_status == 0x18 && "Stage 4 failed: firmware did not reach BPB/root validation completion status 0x18");
     assert(sd_card_sim.saw_cmd17_lba2080 && "Stage 4 failed: CMD17 for FAT start LBA 2080 not observed");
     assert(sd_card_sim.completed_cmd17_lba2080_payload && "Stage 4 failed: FAT start payload did not complete");
     assert(sd_card_sim.saw_cmd17_lba2280 && "Stage 4 failed: CMD17 for root sector LBA 2280 not observed");
     assert(sd_card_sim.completed_cmd17_lba2280_payload && "Stage 4 failed: root sector payload did not complete");
     std::cout << " -> Stage 4 BPB parse addressing gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.4] Stage 5 Root Entry Cluster Read Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.4] Testing Stage 5 Root Entry Cluster Read Validation..." << std::endl;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        stage4_phi2 = !stage4_phi2;
+        top->phi2 = stage4_phi2 ? 1 : 0;
+        tick();
+        if (sd_card_sim.completed_cmd17_lba2281_payload &&
+            top->rootp->atari_cart_top__DOT__soc_status_val == 0x1A) {
+            break;
+        }
+    }
+    const uint8_t stage5_status = top->rootp->atari_cart_top__DOT__soc_status_val;
+    std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage5_status << std::dec << std::endl;
+    std::cout << " -> CMD17 LBA2281=" << (sd_card_sim.saw_cmd17_lba2281 ? "yes" : "no")
+              << " payload=" << (sd_card_sim.completed_cmd17_lba2281_payload ? "yes" : "no")
+              << std::endl;
+    assert(stage5_status == 0x1A && "Stage 5 failed: firmware did not reach root-entry cluster read completion status 0x1A");
+    assert(sd_card_sim.saw_cmd17_lba2281 && "Stage 5 failed: CMD17 for first file cluster LBA 2281 not observed");
+    assert(sd_card_sim.completed_cmd17_lba2281_payload && "Stage 5 failed: first file cluster payload did not complete");
+    std::cout << " -> Stage 5 root-entry cluster read gate PASSED!" << std::endl;
     top->phi2 = 0;
 
     if (!trace_path.empty()) {

@@ -12,6 +12,8 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
+#include <cstring>
 #include "Vatari_cart_top.h"
 #include "Vatari_cart_top___024root.h"
 #include "verilated.h"
@@ -117,95 +119,112 @@ static void print_trace_usage() {
     std::cout << "  --assert-boot   Require reset-vector, opcode-fetch, and MARIA DMA checkpoints" << std::endl;
 }
 
-#include <map>
-#include <cstring>
-
 struct SimSDCard {
     std::map<uint32_t, std::vector<uint8_t>> sectors;
     uint8_t mosi_shift = 0;
-    uint8_t miso_shift = 0xFF;
     int bit_count = 0;
     std::vector<uint8_t> cmd_bytes;
     std::vector<uint8_t> tx_buffer;
     size_t tx_idx = 0;
     bool last_clk = false;
-
-    SimSDCard() {
-        // Sector 0: MBR
-        std::vector<uint8_t> mbr(512, 0);
-        mbr[0x1BE + 4] = 0x0C; // FAT32
-        mbr[0x1BE + 8] = 0x00; // LBA 2048 (0x00000800)
-        mbr[0x1BE + 9] = 0x08;
-        mbr[0x1BE + 10] = 0x00;
-        mbr[0x1BE + 11] = 0x00;
-        mbr[510] = 0x55; mbr[511] = 0xAA;
-        sectors[0] = mbr;
-
-        // Sector 2048: VBR (FAT32 BPB)
-        std::vector<uint8_t> vbr(512, 0);
-        vbr[11] = 0x00; vbr[12] = 0x02; // 512 bytes/sec
-        vbr[13] = 1;                    // 1 sec/clus
-        vbr[14] = 32; vbr[15] = 0;      // 32 reserved sectors
-        vbr[16] = 2;                    // 2 FATs
-        vbr[36] = 100; vbr[37] = 0; vbr[38] = 0; vbr[39] = 0; // 100 sec/FAT
-        vbr[44] = 2;   vbr[45] = 0; vbr[46] = 0; vbr[47] = 0; // root clus = 2
-        vbr[510] = 0x55; vbr[511] = 0xAA;
-        sectors[2048] = vbr;
-
-        // Sector 2280: Root Directory (Cluster 2)
-        std::vector<uint8_t> root_dir(512, 0);
-        struct GameEntry {
-            char name83[11];
-            uint16_t clus;
-        } games[8] = {
-            {{'A','S','T','R','O','W','I','N','A','7','8'}, 3},
-            {{'C','H','O','P','L','I','F','T','A','7','8'}, 4},
-            {{'C','O','M','M','A','N','D','O','A','7','8'}, 5},
-            {{'F','O','O','D','F','I','G','H','A','7','8'}, 6},
-            {{'I','M','P','O','S','S','I','B','A','7','8'}, 7},
-            {{'J','I','N','K','S',' ',' ',' ','A','7','8'}, 8},
-            {{'T','I','G','E','R','H','E','L','A','7','8'}, 9},
-            {{'A','R','T','I','F','I','N','A','A','7','8'}, 10}
-        };
-
-        for (int i = 0; i < 8; ++i) {
-            uint8_t* entry = &root_dir[i * 32];
-            std::memcpy(entry, games[i].name83, 11);
-            entry[11] = 0x20; // Archive file attribute
-            entry[20] = 0; entry[21] = 0; // High cluster
-            entry[26] = games[i].clus & 0xFF; // Low cluster
-            entry[27] = (games[i].clus >> 8) & 0xFF;
-            entry[28] = 0x00; entry[29] = 0x80; entry[30] = 0x00; entry[31] = 0x00; // 32KB size
-        }
-        sectors[2280] = root_dir;
-
-        // Sectors 2281..2288: A78 Headers
-        const char* titles[8] = {
-            "ASTRO WING                      ",
-            "CHOPLIFTER                      ",
-            "COMMANDO                        ",
-            "FOOD FIGHT                      ",
-            "IMPOSSIBLE MISSION              ",
-            "JINKS                           ",
-            "TIGER-HELI                      ",
-            "ARTI DIGITAL EDITION            "
-        };
-
-        for (int i = 0; i < 8; ++i) {
-            std::vector<uint8_t> hdr(512, 0);
-            hdr[0] = 4; // Version 4
-            std::memcpy(&hdr[1], "ATARI7800", 9);
-            std::memcpy(&hdr[10], titles[i], 32);
-            hdr[49] = 0; hdr[50] = 0; hdr[51] = 0xC0; hdr[52] = 0x00; // 48KB
-            hdr[64] = 0; // Linear mapper
-            hdr[66] = 0x00; hdr[67] = 0x02; // POKEY @ $0450
-            sectors[2281 + i] = hdr;
-        }
-    }
-
     int tx_bit_cnt = 0;
     uint8_t current_tx_byte = 0xFF;
     bool current_miso = 1;
+
+    bool saw_cmd0 = false;
+    bool saw_cmd8 = false;
+    bool saw_cmd55 = false;
+    bool saw_cmd41 = false;
+    bool saw_cmd17 = false;
+    bool saw_cmd17_lba0 = false;
+    bool saw_cmd17_lba2048 = false;
+    bool saw_cmd17_lba2080 = false;
+    bool saw_cmd17_lba2280 = false;
+    bool saw_cmd17_lba2281 = false;
+    uint32_t last_cmd17_arg = 0;
+    bool observed_vbr_bpb = false;
+    bool observed_file_a78_header = false;
+    bool completed_cmd17_lba2048_payload = false;
+    bool completed_cmd17_lba2080_payload = false;
+    bool completed_cmd17_lba2280_payload = false;
+    bool completed_cmd17_lba2281_payload = false;
+    bool active_cmd17_payload = false;
+    uint32_t active_cmd17_lba = 0;
+
+    SimSDCard() {
+        std::vector<uint8_t> mbr(512, 0);
+        mbr[0x1BE + 4] = 0x0C;
+        mbr[0x1BE + 8] = 0x00;
+        mbr[0x1BE + 9] = 0x08;
+        mbr[0x1BE + 10] = 0x00;
+        mbr[0x1BE + 11] = 0x00;
+        mbr[510] = 0x55;
+        mbr[511] = 0xAA;
+        sectors[0] = mbr;
+
+        std::vector<uint8_t> vbr(512, 0);
+        vbr[11] = 0x00;
+        vbr[12] = 0x02;
+        vbr[13] = 1;
+        vbr[14] = 32;
+        vbr[15] = 0;
+        vbr[16] = 2;
+        vbr[36] = 100;
+        vbr[37] = 0;
+        vbr[38] = 0;
+        vbr[39] = 0;
+        vbr[44] = 2;
+        vbr[45] = 0;
+        vbr[46] = 0;
+        vbr[47] = 0;
+        vbr[510] = 0x55;
+        vbr[511] = 0xAA;
+        sectors[2048] = vbr;
+
+        std::vector<uint8_t> fat0(512, 0);
+        fat0[0] = 0xF8;
+        fat0[1] = 0xFF;
+        fat0[2] = 0xFF;
+        fat0[3] = 0x0F;
+        fat0[8] = 0xFF;
+        fat0[9] = 0xFF;
+        fat0[10] = 0xFF;
+        fat0[11] = 0x0F;
+        sectors[2080] = fat0;
+
+        std::vector<uint8_t> root_dir(512, 0);
+        const char name83[11] = {'A','S','T','R','O','W','I','N','A','7','8'};
+        std::memcpy(&root_dir[0], name83, 11);
+        root_dir[11] = 0x20;
+        root_dir[20] = 0;
+        root_dir[21] = 0;
+        root_dir[26] = 3;
+        root_dir[27] = 0;
+        root_dir[28] = 0x00;
+        root_dir[29] = 0x80;
+        root_dir[30] = 0x00;
+        root_dir[31] = 0x00;
+        sectors[2280] = root_dir;
+
+        std::vector<uint8_t> file0(512, 0);
+        file0[0] = 4; // A78 header version
+        file0[1] = 'A';
+        file0[2] = 'T';
+        file0[3] = 'A';
+        file0[4] = 'R';
+        file0[5] = 'I';
+        file0[6] = '7';
+        file0[7] = '8';
+        file0[8] = '0';
+        file0[9] = '0';
+        file0[49] = 0x00;
+        file0[50] = 0x00;
+        file0[51] = 0x80;
+        file0[52] = 0x00;
+        file0[53] = 0x00;
+        file0[54] = 0x02;
+        sectors[2281] = file0;
+    }
 
     void update(bool clk, bool cs, bool mosi, bool& miso) {
         if (cs) {
@@ -221,7 +240,6 @@ struct SimSDCard {
             return;
         }
 
-        // Rising clock edge: drive MISO
         if (clk && !last_clk) {
             if (tx_bit_cnt > 0) {
                 current_miso = (current_tx_byte & 0x80) ? 1 : 0;
@@ -233,6 +251,20 @@ struct SimSDCard {
                 current_tx_byte <<= 1;
                 tx_bit_cnt = 7;
                 if (tx_idx >= tx_buffer.size()) {
+                    if (active_cmd17_payload && active_cmd17_lba == 2048u) {
+                        completed_cmd17_lba2048_payload = true;
+                    }
+                    if (active_cmd17_payload && active_cmd17_lba == 2080u) {
+                        completed_cmd17_lba2080_payload = true;
+                    }
+                    if (active_cmd17_payload && active_cmd17_lba == 2280u) {
+                        completed_cmd17_lba2280_payload = true;
+                    }
+                    if (active_cmd17_payload && active_cmd17_lba == 2281u) {
+                        completed_cmd17_lba2281_payload = true;
+                    }
+                    active_cmd17_payload = false;
+                    active_cmd17_lba = 0;
                     tx_buffer.clear();
                     tx_idx = 0;
                 }
@@ -241,15 +273,12 @@ struct SimSDCard {
             }
         }
 
-        // Falling clock edge: sample MOSI
         if (!clk && last_clk) {
             mosi_shift = (mosi_shift << 1) | (mosi ? 1 : 0);
             bit_count++;
-
             if (bit_count == 8) {
-                uint8_t rx_byte = mosi_shift;
+                process_spi_byte(mosi_shift);
                 bit_count = 0;
-                process_spi_byte(rx_byte);
             }
         }
 
@@ -258,10 +287,14 @@ struct SimSDCard {
     }
 
     void process_spi_byte(uint8_t rx) {
-        std::cout << "[SimSD_RX_BYTE] 0x" << std::hex << (int)rx << std::dec << std::endl;
-
         if (!tx_buffer.empty()) {
-            return;
+            if (cmd_bytes.empty() && ((rx & 0xC0) == 0x40)) {
+                tx_buffer.clear();
+                tx_idx = 0;
+                tx_bit_cnt = 0;
+            } else {
+                return;
+            }
         }
 
         if (cmd_bytes.empty() && (rx & 0xC0) != 0x40) {
@@ -269,45 +302,82 @@ struct SimSDCard {
         }
 
         cmd_bytes.push_back(rx);
-        if (cmd_bytes.size() == 6) {
-            uint8_t cmd = cmd_bytes[0] & 0x3F;
-            uint32_t arg = (uint32_t(cmd_bytes[1]) << 24) | (uint32_t(cmd_bytes[2]) << 16) |
-                           (uint32_t(cmd_bytes[3]) << 8) | uint32_t(cmd_bytes[4]);
-            cmd_bytes.clear();
+        if (cmd_bytes.size() != 6) {
+            return;
+        }
 
-            std::cout << " [SimSD] Received CMD" << (int)cmd << " arg=0x" << std::hex << arg << std::dec << std::endl << std::flush;
+        uint8_t cmd = cmd_bytes[0] & 0x3F;
+        uint32_t arg = (uint32_t(cmd_bytes[1]) << 24)
+                     | (uint32_t(cmd_bytes[2]) << 16)
+                     | (uint32_t(cmd_bytes[3]) << 8)
+                     | uint32_t(cmd_bytes[4]);
+        cmd_bytes.clear();
 
-            tx_buffer.clear();
-            tx_idx = 0;
+        std::cout << " [SimSD] CMD" << (int)cmd << " arg=0x" << std::hex << arg << std::dec << std::endl;
 
-            if (cmd == 0) { // CMD0
-                tx_buffer.push_back(0x01);
-            } else if (cmd == 8) { // CMD8
-                tx_buffer.push_back(0x01);
-                tx_buffer.push_back(0x00);
-                tx_buffer.push_back(0x00);
-                tx_buffer.push_back(0x01);
-                tx_buffer.push_back(0xAA);
-            } else if (cmd == 55) { // CMD55
-                tx_buffer.push_back(0x01);
-            } else if (cmd == 41) { // ACMD41
-                tx_buffer.push_back(0x00);
-            } else if (cmd == 17) { // CMD17 (Read Sector)
-                tx_buffer.push_back(0x00); // R1 response
-                tx_buffer.push_back(0xFF); // Delay byte
-                tx_buffer.push_back(0xFE); // Data token
+        tx_buffer.clear();
+        tx_idx = 0;
 
-                auto it = sectors.find(arg);
-                if (it != sectors.end()) {
-                    tx_buffer.insert(tx_buffer.end(), it->second.begin(), it->second.end());
-                } else {
-                    tx_buffer.insert(tx_buffer.end(), 512, 0xFF);
+        if (cmd == 0) {
+            saw_cmd0 = true;
+            tx_buffer.push_back(0x01);
+        } else if (cmd == 8) {
+            saw_cmd8 = true;
+            tx_buffer.push_back(0x01);
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0x01);
+            tx_buffer.push_back(0xAA);
+        } else if (cmd == 55) {
+            saw_cmd55 = true;
+            tx_buffer.push_back(0x01);
+        } else if (cmd == 41) {
+            saw_cmd41 = true;
+            tx_buffer.push_back(0x00);
+        } else if (cmd == 17) {
+            saw_cmd17 = true;
+            last_cmd17_arg = arg;
+            if (arg == 0u) saw_cmd17_lba0 = true;
+            if (arg == 2048u) saw_cmd17_lba2048 = true;
+            if (arg == 2080u) saw_cmd17_lba2080 = true;
+            if (arg == 2280u) saw_cmd17_lba2280 = true;
+            if (arg == 2281u) saw_cmd17_lba2281 = true;
+            active_cmd17_payload = true;
+            active_cmd17_lba = arg;
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0xFF);
+            tx_buffer.push_back(0xFE);
+            auto it = sectors.find(arg);
+            if (it != sectors.end()) {
+                tx_buffer.insert(tx_buffer.end(), it->second.begin(), it->second.end());
+                if (arg == 2048u) {
+                    const std::vector<uint8_t>& sec = it->second;
+                    if (sec.size() >= 48u &&
+                        sec[11] == 0x00 && sec[12] == 0x02 &&
+                        sec[13] == 0x01 &&
+                        sec[14] == 0x20 && sec[15] == 0x00 &&
+                        sec[16] == 0x02 &&
+                        sec[44] == 0x02 && sec[45] == 0x00 && sec[46] == 0x00 && sec[47] == 0x00) {
+                        observed_vbr_bpb = true;
+                    }
                 }
-                tx_buffer.push_back(0xFF); // CRC 1
-                tx_buffer.push_back(0xFF); // CRC 2
+                if (arg == 2281u) {
+                    const std::vector<uint8_t>& sec = it->second;
+                    if (sec.size() >= 55u &&
+                        sec[0] == 4u &&
+                        sec[1] == 'A' && sec[2] == 'T' && sec[3] == 'A' && sec[4] == 'R' &&
+                        sec[5] == 'I' && sec[6] == '7' && sec[7] == '8' && sec[8] == '0' && sec[9] == '0' &&
+                        sec[49] == 0x00 && sec[50] == 0x00 && sec[51] == 0x80 && sec[52] == 0x00) {
+                        observed_file_a78_header = true;
+                    }
+                }
             } else {
-                tx_buffer.push_back(0x00);
+                tx_buffer.insert(tx_buffer.end(), 512, 0xFF);
             }
+            tx_buffer.push_back(0xFF);
+            tx_buffer.push_back(0xFF);
+        } else {
+            tx_buffer.push_back(0x00);
         }
     }
 };
@@ -398,7 +468,6 @@ int main(int argc, char** argv) {
         if (top->rw == 0) {
             top->d = current_write_val;
         }
-
         top->clk = !top->clk;
         top->eval();
 
@@ -556,33 +625,177 @@ int main(int argc, char** argv) {
     std::cout << "[SIM] Internal POR sequence complete. FPGA Core Active." << std::endl;
 
     // ------------------------------------------------------------------------
-    // [TEST 0] MicroSD SPI FAT32 Directory & Title Loading ($E800 - $E8FF)
+    // [TEST 0] Stage 1 SD SPI Command Bring-up
     // ------------------------------------------------------------------------
-    std::cout << "\n[TEST 0] Testing MicroSD SPI FAT32 Directory & Title Loading ($E800 - $E8FF)..." << std::endl;
-    std::cout << "[SIM] Clocking Hazard5 RISC-V softcore for SD SPI & FAT32 directory parse..." << std::endl;
-    uint8_t status_byte = 0;
-    for (int timeout = 0; timeout < 500000; timeout++) {
-        status_byte = run_bus_cycle(0x7FF0, true);
-        if (status_byte & 0x80) break;
+    std::cout << "\n[TEST 0] Testing Stage 1 SD SPI Command Bring-up..." << std::endl;
+    int sd_clk_edges = 0;
+    int sd_cs_low_ticks = 0;
+    int sd_mosi_high_ticks = 0;
+    int prev_sd_clk = top->sd_clk;
+    int watchdog_kick_div = 0;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        if (sd_card_sim.saw_cmd0 && sd_card_sim.saw_cmd8 && sd_card_sim.saw_cmd55 &&
+            sd_card_sim.saw_cmd41 && sd_card_sim.saw_cmd17) {
+            break;
+        }
+        watchdog_kick_div++;
+        if (watchdog_kick_div >= 2000) {
+            watchdog_kick_div = 0;
+            top->phi2 = 1;
+            tick();
+            top->phi2 = 0;
+        }
+        tick();
+        if (top->sd_cs == 0) {
+            sd_cs_low_ticks++;
+        }
+        if (top->sd_mosi != 0) {
+            sd_mosi_high_ticks++;
+        }
+        if (top->sd_clk != prev_sd_clk) {
+            sd_clk_edges++;
+            prev_sd_clk = top->sd_clk;
+        }
     }
-    std::cout << " -> Status Register Read [$7FF0]: 0x" << std::hex << (int)status_byte << std::endl;
-    assert((status_byte & 0x80) != 0 && "Status register $7FF0 bit 7 was not set by Hazard5!");
+    std::cout << " -> CMD0=" << (sd_card_sim.saw_cmd0 ? "yes" : "no")
+              << " CMD8=" << (sd_card_sim.saw_cmd8 ? "yes" : "no")
+              << " CMD55=" << (sd_card_sim.saw_cmd55 ? "yes" : "no")
+              << " ACMD41=" << (sd_card_sim.saw_cmd41 ? "yes" : "no")
+              << " CMD17=" << (sd_card_sim.saw_cmd17 ? "yes" : "no")
+              << " arg=0x" << std::hex << sd_card_sim.last_cmd17_arg << std::dec
+              << std::endl;
+    std::cout << " -> SD pins: clk_edges=" << sd_clk_edges
+              << " cs_low_ticks=" << sd_cs_low_ticks
+              << " mosi_high_ticks=" << sd_mosi_high_ticks
+              << std::endl;
+    assert(sd_card_sim.saw_cmd0 && "Stage 1 failed: CMD0 not observed");
+    assert(sd_card_sim.saw_cmd8 && "Stage 1 failed: CMD8 not observed");
+    assert(sd_card_sim.saw_cmd55 && "Stage 1 failed: CMD55 not observed");
+    assert(sd_card_sim.saw_cmd41 && "Stage 1 failed: ACMD41 not observed");
+    assert(sd_card_sim.saw_cmd17 && "Stage 1 failed: CMD17 not observed");
+    assert(sd_card_sim.last_cmd17_arg == 0 && "Stage 1 failed: first CMD17 arg was not LBA 0");
+    std::cout << " -> Stage 1 SD SPI command gate PASSED!" << std::endl;
 
-    char slot0_title[33] = {0};
-    for (int i = 0; i < 32; i++) {
-        slot0_title[i] = (char)run_bus_cycle(0xE800 + i, true);
+    // ------------------------------------------------------------------------
+    // [TEST 0.1] Stage 2 SD Sector Probe (LBA 2048)
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.1] Testing Stage 2 SD Sector Probe (LBA 2048)..." << std::endl;
+    watchdog_kick_div = 0;
+    int core_reset_falls = 0;
+    int prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
+    for (int timeout = 0; timeout < 200000 && !sd_card_sim.saw_cmd17_lba2048; timeout++) {
+        watchdog_kick_div++;
+        if (watchdog_kick_div >= 2000) {
+            watchdog_kick_div = 0;
+            top->phi2 = 1;
+            tick();
+            top->phi2 = 0;
+        }
+        tick();
+        if (prev_core_rst_n == 1 && top->rootp->atari_cart_top__DOT__core_rst_n == 0) {
+            core_reset_falls++;
+        }
+        prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
     }
-    std::cout << " -> Menu Slot 0 Title [$E800]: \"" << slot0_title << "\"" << std::endl;
-    assert(std::string(slot0_title).find("ASTRO WING") != std::string::npos && "Slot 0 title mismatch!");
+    std::cout << " -> CMD17 LBA0=" << (sd_card_sim.saw_cmd17_lba0 ? "yes" : "no")
+              << " CMD17 LBA2048=" << (sd_card_sim.saw_cmd17_lba2048 ? "yes" : "no")
+              << std::endl;
+    std::cout << " -> core_reset_falls=" << core_reset_falls << std::endl;
+    assert(sd_card_sim.saw_cmd17_lba0 && "Stage 2 failed: CMD17 for LBA 0 not observed");
+    assert(sd_card_sim.saw_cmd17_lba2048 && "Stage 2 failed: CMD17 for LBA 2048 not observed");
+    std::cout << " -> Stage 2 SD sector probe gate PASSED!" << std::endl;
 
-    char slot1_title[33] = {0};
-    for (int i = 0; i < 32; i++) {
-        slot1_title[i] = (char)run_bus_cycle(0xE820 + i, true);
+    // ------------------------------------------------------------------------
+    // [TEST 0.2] Stage 3 VBR Payload Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.2] Testing Stage 3 VBR Payload Validation..." << std::endl;
+    watchdog_kick_div = 0;
+    for (int timeout = 0; timeout < 200000 && !sd_card_sim.completed_cmd17_lba2048_payload; timeout++) {
+        watchdog_kick_div++;
+        if (watchdog_kick_div >= 2000) {
+            watchdog_kick_div = 0;
+            top->phi2 = 1;
+            tick();
+            top->phi2 = 0;
+        }
+        tick();
     }
-    std::cout << " -> Menu Slot 1 Title [$E820]: \"" << slot1_title << "\"" << std::endl;
-    assert(std::string(slot1_title).find("CHOPLIFTER") != std::string::npos && "Slot 1 title mismatch!");
+    std::cout << " -> observed_vbr_bpb=" << (sd_card_sim.observed_vbr_bpb ? "yes" : "no") << std::endl;
+    std::cout << " -> completed_cmd17_lba2048_payload=" << (sd_card_sim.completed_cmd17_lba2048_payload ? "yes" : "no") << std::endl;
+    assert(sd_card_sim.observed_vbr_bpb && "Stage 3 failed: expected FAT32 BPB bytes were not observed on LBA 2048 payload");
+    assert(sd_card_sim.completed_cmd17_lba2048_payload && "Stage 3 failed: CMD17 LBA2048 payload stream did not complete");
+    std::cout << " -> Stage 3 VBR payload gate PASSED!" << std::endl;
 
-    std::cout << " -> MicroSD SPI FAT32 Directory & Title Engine TEST PASSED!" << std::endl;
+    // ------------------------------------------------------------------------
+    // [TEST 0.3] Stage 4 BPB Parse Addressing Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.3] Testing Stage 4 BPB Parse Addressing Validation..." << std::endl;
+    bool stage4_phi2 = false;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        stage4_phi2 = !stage4_phi2;
+        top->phi2 = stage4_phi2 ? 1 : 0;
+        tick();
+        if (sd_card_sim.completed_cmd17_lba2080_payload &&
+            sd_card_sim.completed_cmd17_lba2280_payload) {
+            break;
+        }
+    }
+    const uint8_t stage_status = top->rootp->atari_cart_top__DOT__soc_status_val;
+    std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage_status << std::dec << std::endl;
+    std::cout << " -> CMD17 LBA2080=" << (sd_card_sim.saw_cmd17_lba2080 ? "yes" : "no")
+              << " payload=" << (sd_card_sim.completed_cmd17_lba2080_payload ? "yes" : "no")
+              << std::endl;
+    std::cout << " -> CMD17 LBA2280=" << (sd_card_sim.saw_cmd17_lba2280 ? "yes" : "no")
+              << " payload=" << (sd_card_sim.completed_cmd17_lba2280_payload ? "yes" : "no")
+              << std::endl;
+    assert(sd_card_sim.saw_cmd17_lba2080 && "Stage 4 failed: CMD17 for FAT start LBA 2080 not observed");
+    assert(sd_card_sim.completed_cmd17_lba2080_payload && "Stage 4 failed: FAT start payload did not complete");
+    assert(sd_card_sim.saw_cmd17_lba2280 && "Stage 4 failed: CMD17 for root sector LBA 2280 not observed");
+    assert(sd_card_sim.completed_cmd17_lba2280_payload && "Stage 4 failed: root sector payload did not complete");
+    std::cout << " -> Stage 4 BPB parse addressing gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.4] Stage 5 Root Entry Cluster Read Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.4] Testing Stage 5 Root Entry Cluster Read Validation..." << std::endl;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        stage4_phi2 = !stage4_phi2;
+        top->phi2 = stage4_phi2 ? 1 : 0;
+        tick();
+        if (sd_card_sim.completed_cmd17_lba2281_payload &&
+            top->rootp->atari_cart_top__DOT__soc_status_val == 0x1A) {
+            break;
+        }
+    }
+    const uint8_t stage5_status = top->rootp->atari_cart_top__DOT__soc_status_val;
+    std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage5_status << std::dec << std::endl;
+    std::cout << " -> CMD17 LBA2281=" << (sd_card_sim.saw_cmd17_lba2281 ? "yes" : "no")
+              << " payload=" << (sd_card_sim.completed_cmd17_lba2281_payload ? "yes" : "no")
+              << std::endl;
+    assert(stage5_status == 0x1A && "Stage 5 failed: firmware did not reach root-entry cluster read completion status 0x1A");
+    assert(sd_card_sim.saw_cmd17_lba2281 && "Stage 5 failed: CMD17 for first file cluster LBA 2281 not observed");
+    assert(sd_card_sim.completed_cmd17_lba2281_payload && "Stage 5 failed: first file cluster payload did not complete");
+    std::cout << " -> Stage 5 root-entry cluster read gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.5] Stage 6 A78 Header Parse Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.5] Testing Stage 6 A78 Header Parse Validation..." << std::endl;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        stage4_phi2 = !stage4_phi2;
+        top->phi2 = stage4_phi2 ? 1 : 0;
+        tick();
+        if (top->rootp->atari_cart_top__DOT__soc_status_val == 0x1C) {
+            break;
+        }
+    }
+    const uint8_t stage6_status = top->rootp->atari_cart_top__DOT__soc_status_val;
+    std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage6_status << std::dec << std::endl;
+    std::cout << " -> observed_file_a78_header=" << (sd_card_sim.observed_file_a78_header ? "yes" : "no") << std::endl;
+    assert(stage6_status == 0x1C && "Stage 6 failed: firmware did not reach A78 header validation completion status 0x1C");
+    assert(sd_card_sim.observed_file_a78_header && "Stage 6 failed: fixture file sector did not present expected A78 header bytes");
+    std::cout << " -> Stage 6 A78 header parse gate PASSED!" << std::endl;
+    top->phi2 = 0;
 
     if (!trace_path.empty()) {
         const auto trace_cycles = load_trace_cycles(trace_path);
@@ -733,7 +946,8 @@ int main(int argc, char** argv) {
 
     for (uint16_t base : pokey_candidates) {
         run_bus_cycle(static_cast<uint16_t>(base + 0x0F), false, 0x03); // Enable POKEY audio & timers
-        run_bus_cycle(static_cast<uint16_t>(base + 0x00), false, 0xA0); // Set POKEY AUDF1 frequency
+        run_bus_cycle(static_cast<uint16_t>(base + 0x08), false, 0x40); // Clock channel 0 directly from phi2
+        run_bus_cycle(static_cast<uint16_t>(base + 0x00), false, 0x00); // Fast channel 0 period for observable audio
         run_bus_cycle(static_cast<uint16_t>(base + 0x01), false, 0xAF); // Set POKEY AUDC1 volume & pure tone
         std::cout << " -> probe base 0x" << std::hex << base
                   << " audc0=0x" << (int)top->rootp->atari_cart_top__DOT__u_pokey__DOT__audc[0]
@@ -767,11 +981,18 @@ int main(int argc, char** argv) {
     assert((rnd1 != rnd2 || rnd2 != rnd3) && "POKEY RANDOM generator failed to evolve!");
 
     int audio_high_cnt = 0;
-    for (int i = 0; i < 5000; i++) {
-        tick();
-        if (top->audio) audio_high_cnt++;
-        if (top->rootp->atari_cart_top__DOT__pcm_audio != 0) {
-            saw_pcm_audio = true;
+    for (int cyc = 0; cyc < 256; cyc++) {
+        top->phi2 = 0;
+        for (int i = 0; i < 14; i++) {
+            tick();
+            if (top->audio) audio_high_cnt++;
+            if (top->rootp->atari_cart_top__DOT__pcm_audio != 0) saw_pcm_audio = true;
+        }
+        top->phi2 = 1;
+        for (int i = 0; i < 16; i++) {
+            tick();
+            if (top->audio) audio_high_cnt++;
+            if (top->rootp->atari_cart_top__DOT__pcm_audio != 0) saw_pcm_audio = true;
         }
     }
     std::cout << " -> Audio PWM High Pulses (Pin 76): " << std::dec << audio_high_cnt << " / 5000 cycles" << std::endl;

@@ -197,15 +197,6 @@ module hazard5_soc #(
         end
     end
 
-    always @(posedge clk) begin
-        if (cpu_hwrite && ahb_transfer) begin
-            $display("[EVERY_WRITE] haddr=0x%08h hwdata=0x%08h is_cart=%b", cpu_haddr, cpu_hwdata, is_cart_ram);
-        end
-        if (cart_ram_write_phase) begin
-            $display("[CART_RAM_WRITE] addr=0x%04h wdata=0x%02h ('%c')", cart_ram_write_addr, cart_ram_wdata, cart_ram_wdata);
-        end
-    end
-
     assign cart_ram_we    = cart_ram_write_phase;
     assign cart_ram_addr  = cart_ram_write_addr;
     assign cart_ram_wdata = cpu_hwdata[7:0] | cpu_hwdata[15:8] | cpu_hwdata[23:16] | cpu_hwdata[31:24];
@@ -236,7 +227,6 @@ module hazard5_soc #(
             mapper_type    <= 4'h0;
             status_val     <= 8'h00;
         end else if (csr_write_phase) begin
-            $display("[SOC_CSR_WRITE] addr=%0d data=0x%02h", csr_write_addr, cpu_hwdata[7:0]);
             if (csr_write_addr == 2'b00) begin
                 pokey_enable   <= cpu_hwdata[0];
                 pokey_addr_sel <= cpu_hwdata[2:1];

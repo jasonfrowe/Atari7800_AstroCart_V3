@@ -10,7 +10,10 @@ module rom_block_2k #(
 )(
     input  wire        clk,
     input  wire [10:0] raddr,
-    output reg  [7:0]  rdata
+    output reg  [7:0]  rdata,
+    input  wire        we,
+    input  wire [10:0] waddr,
+    input  wire [7:0]  wdata
 );
     reg [7:0] mem [0:2047];
 
@@ -21,6 +24,9 @@ module rom_block_2k #(
     end
 
     always @(posedge clk) begin
+        if (we) begin
+            mem[waddr] <= wdata;
+        end
         rdata <= mem[raddr];
     end
 

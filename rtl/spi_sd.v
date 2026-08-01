@@ -49,6 +49,7 @@ module spi_sd (
                     2'b00: begin // WRITE DATA -> Start SPI transfer
                         if (!busy) begin
                             shift_reg <= wdata;
+                            sd_mosi   <= wdata[7];
                             busy      <= 1'b1;
                             bit_cnt   <= 3'd7;
                             clk_cnt   <= 8'd0;
@@ -95,7 +96,7 @@ module spi_sd (
         if (cs) begin
             case (addr)
                 2'b00: rdata = rx_reg;
-                2'b01: rdata = {6'b000000, busy, sd_cs};
+                2'b01: rdata = {6'b000000, busy || (we && addr == 2'b00), sd_cs};
                 2'b10: rdata = clk_div;
                 default: rdata = 8'h00;
             endcase

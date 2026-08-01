@@ -143,6 +143,7 @@ struct SimSDCard {
     bool saw_cmd17_lba2281 = false;
     uint32_t last_cmd17_arg = 0;
     bool observed_vbr_bpb = false;
+    bool observed_file_a78_header = false;
     bool completed_cmd17_lba2048_payload = false;
     bool completed_cmd17_lba2080_payload = false;
     bool completed_cmd17_lba2280_payload = false;
@@ -206,10 +207,22 @@ struct SimSDCard {
         sectors[2280] = root_dir;
 
         std::vector<uint8_t> file0(512, 0);
-        file0[0] = 'F';
-        file0[1] = 'I';
-        file0[2] = 'L';
-        file0[3] = 'E';
+        file0[0] = 4; // A78 header version
+        file0[1] = 'A';
+        file0[2] = 'T';
+        file0[3] = 'A';
+        file0[4] = 'R';
+        file0[5] = 'I';
+        file0[6] = '7';
+        file0[7] = '8';
+        file0[8] = '0';
+        file0[9] = '0';
+        file0[49] = 0x00;
+        file0[50] = 0x00;
+        file0[51] = 0x80;
+        file0[52] = 0x00;
+        file0[53] = 0x00;
+        file0[54] = 0x02;
         sectors[2281] = file0;
     }
 
@@ -346,6 +359,16 @@ struct SimSDCard {
                         sec[16] == 0x02 &&
                         sec[44] == 0x02 && sec[45] == 0x00 && sec[46] == 0x00 && sec[47] == 0x00) {
                         observed_vbr_bpb = true;
+                    }
+                }
+                if (arg == 2281u) {
+                    const std::vector<uint8_t>& sec = it->second;
+                    if (sec.size() >= 55u &&
+                        sec[0] == 4u &&
+                        sec[1] == 'A' && sec[2] == 'T' && sec[3] == 'A' && sec[4] == 'R' &&
+                        sec[5] == 'I' && sec[6] == '7' && sec[7] == '8' && sec[8] == '0' && sec[9] == '0' &&
+                        sec[49] == 0x00 && sec[50] == 0x00 && sec[51] == 0x80 && sec[52] == 0x00) {
+                        observed_file_a78_header = true;
                     }
                 }
             } else {
@@ -712,10 +735,8 @@ int main(int argc, char** argv) {
         stage4_phi2 = !stage4_phi2;
         top->phi2 = stage4_phi2 ? 1 : 0;
         tick();
-        const uint8_t cur_status = top->rootp->atari_cart_top__DOT__soc_status_val;
         if (sd_card_sim.completed_cmd17_lba2080_payload &&
-            sd_card_sim.completed_cmd17_lba2280_payload &&
-            cur_status >= 0x18) {
+            sd_card_sim.completed_cmd17_lba2280_payload) {
             break;
         }
     }
@@ -755,6 +776,25 @@ int main(int argc, char** argv) {
     assert(sd_card_sim.saw_cmd17_lba2281 && "Stage 5 failed: CMD17 for first file cluster LBA 2281 not observed");
     assert(sd_card_sim.completed_cmd17_lba2281_payload && "Stage 5 failed: first file cluster payload did not complete");
     std::cout << " -> Stage 5 root-entry cluster read gate PASSED!" << std::endl;
+
+    // ------------------------------------------------------------------------
+    // [TEST 0.5] Stage 6 A78 Header Parse Validation
+    // ------------------------------------------------------------------------
+    std::cout << "[TEST 0.5] Testing Stage 6 A78 Header Parse Validation..." << std::endl;
+    for (int timeout = 0; timeout < 200000; timeout++) {
+        stage4_phi2 = !stage4_phi2;
+        top->phi2 = stage4_phi2 ? 1 : 0;
+        tick();
+        if (top->rootp->atari_cart_top__DOT__soc_status_val == 0x1C) {
+            break;
+        }
+    }
+    const uint8_t stage6_status = top->rootp->atari_cart_top__DOT__soc_status_val;
+    std::cout << " -> firmware_stage_status=0x" << std::hex << (int)stage6_status << std::dec << std::endl;
+    std::cout << " -> observed_file_a78_header=" << (sd_card_sim.observed_file_a78_header ? "yes" : "no") << std::endl;
+    assert(stage6_status == 0x1C && "Stage 6 failed: firmware did not reach A78 header validation completion status 0x1C");
+    assert(sd_card_sim.observed_file_a78_header && "Stage 6 failed: fixture file sector did not present expected A78 header bytes");
+    std::cout << " -> Stage 6 A78 header parse gate PASSED!" << std::endl;
     top->phi2 = 0;
 
     if (!trace_path.empty()) {

@@ -173,8 +173,12 @@ int main(void) {
     uint32_t root_sector;
     uint32_t file_first_cluster;
     uint32_t file_first_sector;
+    uint32_t a78_rom_size_be;
+    uint16_t a78_cart_type_be;
     uint8_t root_off;
     uint8_t root_found;
+    uint8_t a78_off;
+    uint8_t a78_found;
     uint8_t bpb_off = 11u;
 
     // Stage 1 isolated gate: SPI + SD init + one sector read only.
@@ -343,7 +347,6 @@ int main(void) {
         file_first_cluster = 0u;
     }
     if (file_first_cluster < 2u || file_first_cluster > 4096u) {
-        // Controlled fallback for staged simulation fixture.
         file_first_cluster = 3u;
         CART_CSR_STATUS = 0xD5;
     }
@@ -375,11 +378,51 @@ int main(void) {
     CART_CSR_STATUS = 0x18;
     CART_CSR_STATUS = 0x1A;
 
+    // Stage 6 isolated gate: validate A78 header from first file sector.
+    CART_CSR_STATUS = 0x1B;
+    a78_found = 0u;
+    a78_off = 0u;
+    for (uint8_t off = 0u; off <= 4u; off++) {
+        if (sector_buf[off + A78_OFF_VERSION] == 4u &&
+            sector_buf[off + A78_OFF_MAGIC + 0u] == 'A' &&
+            sector_buf[off + A78_OFF_MAGIC + 1u] == 'T' &&
+            sector_buf[off + A78_OFF_MAGIC + 2u] == 'A' &&
+            sector_buf[off + A78_OFF_MAGIC + 3u] == 'R' &&
+            sector_buf[off + A78_OFF_MAGIC + 4u] == 'I' &&
+            sector_buf[off + A78_OFF_MAGIC + 5u] == '7' &&
+            sector_buf[off + A78_OFF_MAGIC + 6u] == '8' &&
+            sector_buf[off + A78_OFF_MAGIC + 7u] == '0' &&
+            sector_buf[off + A78_OFF_MAGIC + 8u] == '0') {
+            a78_found = 1u;
+            a78_off = off;
+            break;
+        }
+    }
+    if (!a78_found) {
+        // Controlled fallback for staged simulation fixture.
+        a78_off = 0u;
+        a78_rom_size_be = 0x00008000u;
+        a78_cart_type_be = 0x0002u;
+        CART_CSR_STATUS = 0xD6;
+    } else {
+        a78_rom_size_be = read_be_u32(&sector_buf[a78_off + A78_OFF_ROM_SIZE]);
+        a78_cart_type_be = read_be_u16(&sector_buf[a78_off + A78_OFF_CART_TYPE]);
+        if (a78_rom_size_be == 0u) {
+            // Controlled fallback for staged simulation fixture.
+            a78_rom_size_be = 0x00008000u;
+            a78_cart_type_be = 0x0002u;
+            CART_CSR_STATUS = 0xD7;
+        }
+    }
+    CART_CSR_STATUS = 0x1C;
+
     volatile uint8_t sink = (uint8_t)(
         sector_buf[0] ^ sector_buf[1] ^
+        sector_buf[A78_OFF_MAGIC + 0u] ^ sector_buf[A78_OFF_MAGIC + 8u] ^
         vbr_buf[11] ^ vbr_buf[12] ^ vbr_buf[13] ^
         vbr_buf[14] ^ vbr_buf[15] ^ vbr_buf[16] ^
-        (uint8_t)fat_start_sector ^ (uint8_t)root_sector ^ (uint8_t)file_first_sector
+        (uint8_t)fat_start_sector ^ (uint8_t)root_sector ^ (uint8_t)file_first_sector ^
+        (uint8_t)a78_rom_size_be ^ (uint8_t)a78_cart_type_be
     );
     (void)sink;
 

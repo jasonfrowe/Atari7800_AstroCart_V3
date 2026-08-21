@@ -135,6 +135,8 @@ struct SimSDCard {
     bool saw_cmd8 = false;
     bool saw_cmd55 = false;
     bool saw_cmd41 = false;
+    bool saw_cmd58 = false;
+    bool saw_cmd16 = false;
     bool saw_cmd17 = false;
     bool saw_cmd17_lba0 = false;
     bool saw_cmd17_lba2048 = false;
@@ -333,6 +335,16 @@ struct SimSDCard {
             tx_buffer.push_back(0x01);
         } else if (cmd == 41) {
             saw_cmd41 = true;
+            tx_buffer.push_back(0x00);
+        } else if (cmd == 58) {
+            saw_cmd58 = true;
+            tx_buffer.push_back(0x00);
+            tx_buffer.push_back(0x40); // OCR[31:24], CCS=1 (SDHC block addressing)
+            tx_buffer.push_back(0xFF);
+            tx_buffer.push_back(0x80);
+            tx_buffer.push_back(0x00);
+        } else if (cmd == 16) {
+            saw_cmd16 = true;
             tx_buffer.push_back(0x00);
         } else if (cmd == 17) {
             saw_cmd17 = true;
@@ -661,6 +673,7 @@ int main(int argc, char** argv) {
               << " CMD8=" << (sd_card_sim.saw_cmd8 ? "yes" : "no")
               << " CMD55=" << (sd_card_sim.saw_cmd55 ? "yes" : "no")
               << " ACMD41=" << (sd_card_sim.saw_cmd41 ? "yes" : "no")
+              << " CMD58=" << (sd_card_sim.saw_cmd58 ? "yes" : "no")
               << " CMD17=" << (sd_card_sim.saw_cmd17 ? "yes" : "no")
               << " arg=0x" << std::hex << sd_card_sim.last_cmd17_arg << std::dec
               << std::endl;
@@ -672,6 +685,7 @@ int main(int argc, char** argv) {
     assert(sd_card_sim.saw_cmd8 && "Stage 1 failed: CMD8 not observed");
     assert(sd_card_sim.saw_cmd55 && "Stage 1 failed: CMD55 not observed");
     assert(sd_card_sim.saw_cmd41 && "Stage 1 failed: ACMD41 not observed");
+    assert(sd_card_sim.saw_cmd58 && "Stage 1 failed: CMD58 (OCR read) not observed");
     assert(sd_card_sim.saw_cmd17 && "Stage 1 failed: CMD17 not observed");
     assert(sd_card_sim.last_cmd17_arg == 0 && "Stage 1 failed: first CMD17 arg was not LBA 0");
     std::cout << " -> Stage 1 SD SPI command gate PASSED!" << std::endl;

@@ -98,6 +98,25 @@ Connect your Tang Nano 9K via USB-C to your Mac, then run:
   ```
 
 
+## 🔎 SD Card Bring-Up Telemetry
+
+The current firmware exposes staged status codes through `CART_CSR_STATUS` to make SD bring-up debuggable on real hardware.
+
+### SD Init Failure Codes
+
+- `0xF0`: CMD0 did not return Idle (`R1=0x01` expected)
+- `0xF1`: CMD8 failed or returned invalid voltage/check pattern
+- `0xF2`: ACMD41 timed out (card never left idle)
+- `0xF3`: CMD58 (OCR read) failed
+- `0xF4`: CMD16 (set 512-byte block length) failed on SDSC path
+
+### Why This Matters
+
+1. Distinguishes transport/init failures from FAT or `.a78` parser issues.
+2. Makes SDHC-vs-SDSC addressing problems visible early.
+3. Keeps simulation aligned with hardware by checking the same command sequence (CMD0/CMD8/ACMD41/CMD58, and CMD16 when required).
+
+
 
 
 ## ✅ Current Milestone (AstroWing Parity)

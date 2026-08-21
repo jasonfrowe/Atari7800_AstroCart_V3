@@ -50,6 +50,15 @@ typedef unsigned int   uint32_t;
 #define CART_CSR_CTRL  REG32(0xC0000000)
 #define CART_CSR_STATUS REG32(0xC0000004)
 
+// SD init diagnostic status codes (hardware bring-up focused)
+#define SD_INIT_ERR_CMD0         0xF0u
+#define SD_INIT_ERR_CMD8         0xF1u
+#define SD_INIT_ERR_ACMD41_TO    0xF2u
+#define SD_INIT_ERR_CMD58        0xF3u
+#define SD_INIT_ERR_CMD16        0xF4u
+
+static uint8_t sd_is_high_capacity = 1u;
+
 // SPI Helper Functions
 static void spi_set_cs(uint8_t state) {
     SPI_CTRL = state ? 1 : 0; // 1 = High (Inactive), 0 = Low (Active)
@@ -80,32 +89,107 @@ static uint8_t sd_cmd(uint8_t cmd, uint32_t arg, uint8_t crc) {
     return res;
 }
 
+static void sd_deselect(void) {
+    spi_set_cs(1);
+    spi_transfer(0xFF);
+}
+
+static uint32_t sd_sector_arg(uint32_t sector) {
+    if (sd_is_high_capacity) {
+        return sector;
+    }
+    return sector << 9;
+}
+
 static int sd_init(void) {
+    uint8_t r1;
+    uint8_t r7[4];
+    uint8_t supports_cmd8 = 0u;
+    uint8_t card_ready = 0u;
+
     SPI_DIV = 33; // Slow clock (~400 kHz) for SD initialization
     spi_set_cs(1);
     for (int i = 0; i < 10; i++) spi_transfer(0xFF); // 80 dummy clocks
 
-    if (sd_cmd(0, 0, 0x95) != 0x01) return -1; // CMD0: Idle state
-    sd_cmd(8, 0x000001AA, 0x87);              // CMD8: Check voltage
+    r1 = sd_cmd(0, 0, 0x95);
+    sd_deselect();
+    if (r1 != 0x01) {
+        CART_CSR_STATUS = SD_INIT_ERR_CMD0;
+        return -1; // CMD0: Idle state
+    }
+
+    r1 = sd_cmd(8, 0x000001AA, 0x87); // CMD8: Check voltage/pattern
+    if (r1 == 0x01) {
+        supports_cmd8 = 1u;
+        r7[0] = spi_transfer(0xFF);
+        r7[1] = spi_transfer(0xFF);
+        r7[2] = spi_transfer(0xFF);
+        r7[3] = spi_transfer(0xFF);
+        if (r7[2] != 0x01 || r7[3] != 0xAA) {
+            sd_deselect();
+            CART_CSR_STATUS = SD_INIT_ERR_CMD8;
+            return -2;
+        }
+    } else if ((r1 & 0x04u) == 0u) {
+        sd_deselect();
+        CART_CSR_STATUS = SD_INIT_ERR_CMD8;
+        return -2;
+    }
+    sd_deselect();
 
     // ACMD41 loop
-    for (int timeout = 0; timeout < 1000; timeout++) {
-        sd_cmd(55, 0, 0xFF);
-        if (sd_cmd(41, 0x40000000, 0xFF) == 0x00) break;
+    for (int timeout = 0; timeout < 2000; timeout++) {
+        (void)sd_cmd(55, 0, 0xFF);
+        sd_deselect();
+        r1 = sd_cmd(41, supports_cmd8 ? 0x40000000u : 0u, 0xFF);
+        sd_deselect();
+        if (r1 == 0x00) {
+            card_ready = 1u;
+            break;
+        }
+    }
+    if (!card_ready) {
+        CART_CSR_STATUS = SD_INIT_ERR_ACMD41_TO;
+        return -3;
+    }
+
+    // CMD58 (R3): determine SDHC/SDXC (block addressing) vs SDSC (byte addressing).
+    r1 = sd_cmd(58, 0, 0xFF);
+    if (r1 != 0x00) {
+        sd_deselect();
+        CART_CSR_STATUS = SD_INIT_ERR_CMD58;
+        return -4;
+    }
+    {
+        const uint8_t ocr0 = spi_transfer(0xFF);
+        (void)spi_transfer(0xFF);
+        (void)spi_transfer(0xFF);
+        (void)spi_transfer(0xFF);
+        sd_is_high_capacity = (ocr0 & 0x40u) ? 1u : 0u;
+    }
+    sd_deselect();
+
+    // Standard-capacity cards require explicit 512-byte block length in SPI mode.
+    if (!sd_is_high_capacity) {
+        r1 = sd_cmd(16, 512u, 0xFF);
+        sd_deselect();
+        if (r1 != 0x00) {
+            CART_CSR_STATUS = SD_INIT_ERR_CMD16;
+            return -5;
+        }
     }
 
     SPI_DIV = 0; // High speed clock (~13.5 MHz)
-    spi_set_cs(1);
+    sd_deselect();
     return 0;
 }
 
 // Read 512-byte Sector from SD Card
 static int sd_read_sector(uint32_t sector, uint8_t *buf) {
     for (int attempt = 0; attempt < 4; attempt++) {
-        uint8_t r1 = sd_cmd(17, sector, 0xFF);
+        uint8_t r1 = sd_cmd(17, sd_sector_arg(sector), 0xFF);
         if (r1 != 0x00) {
-            spi_set_cs(1);
-            spi_transfer(0xFF);
+            sd_deselect();
             continue;
         }
 
@@ -117,8 +201,7 @@ static int sd_read_sector(uint32_t sector, uint8_t *buf) {
             if (token == 0xFE) break;
         }
         if (token != 0xFE) {
-            spi_set_cs(1);
-            spi_transfer(0xFF);
+            sd_deselect();
             continue;
         }
 
@@ -128,13 +211,11 @@ static int sd_read_sector(uint32_t sector, uint8_t *buf) {
         // Read 16-bit CRC
         spi_transfer(0xFF);
         spi_transfer(0xFF);
-        spi_set_cs(1);
-        spi_transfer(0xFF);
+        sd_deselect();
         return 0;
     }
 
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
     return -1;
 }
 
@@ -183,22 +264,23 @@ int main(void) {
 
     // Stage 1 isolated gate: SPI + SD init + one sector read only.
     if (sd_init() != 0) {
-        CART_CSR_STATUS = 0xE0;
+        if (CART_CSR_STATUS == 0u) {
+            CART_CSR_STATUS = 0xE0;
+        }
         while (1) {}
     }
     CART_CSR_STATUS = 0x11;
 
     // Stage 1 isolated gate: explicit CMD17 probe for LBA 0.
-    if (sd_cmd(17, 0, 0xFF) != 0x00) {
+    if (sd_cmd(17, sd_sector_arg(0u), 0xFF) != 0x00) {
         CART_CSR_STATUS = 0xE1;
         while (1) {}
     }
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
     CART_CSR_STATUS = 0x12;
 
     // Stage 2 isolated gate: issue explicit CMD17 probe to VBR sector LBA 2048.
-    if (sd_cmd(17, 2048, 0xFF) != 0x00) {
+    if (sd_cmd(17, sd_sector_arg(2048u), 0xFF) != 0x00) {
         CART_CSR_STATUS = 0xE2;
         while (1) {}
     }
@@ -220,8 +302,7 @@ int main(void) {
     }
     spi_transfer(0xFF);
     spi_transfer(0xFF);
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
     CART_CSR_STATUS = 0x14;
 
     // Stage 4 isolated gate: parse FAT32 BPB fields and issue computed reads.
@@ -274,7 +355,7 @@ int main(void) {
     root_sector = cluster_start_sector + (root_cluster - 2u) * (uint32_t)sec_per_clus;
     CART_CSR_STATUS = 0x15;
 
-    if (sd_cmd(17, fat_start_sector, 0xFF) != 0x00) {
+    if (sd_cmd(17, sd_sector_arg(fat_start_sector), 0xFF) != 0x00) {
         CART_CSR_STATUS = 0xE6;
         while (1) {}
     }
@@ -292,12 +373,11 @@ int main(void) {
     }
     spi_transfer(0xFF);
     spi_transfer(0xFF);
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
 
     CART_CSR_STATUS = 0x16;
 
-    if (sd_cmd(17, root_sector, 0xFF) != 0x00) {
+    if (sd_cmd(17, sd_sector_arg(root_sector), 0xFF) != 0x00) {
         CART_CSR_STATUS = 0xE7;
         while (1) {}
     }
@@ -315,8 +395,7 @@ int main(void) {
     }
     spi_transfer(0xFF);
     spi_transfer(0xFF);
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
 
     CART_CSR_STATUS = 0x17;
 
@@ -354,7 +433,7 @@ int main(void) {
     file_first_sector = cluster_start_sector + (file_first_cluster - 2u) * (uint32_t)sec_per_clus;
     CART_CSR_STATUS = 0x19;
 
-    if (sd_cmd(17, file_first_sector, 0xFF) != 0x00) {
+    if (sd_cmd(17, sd_sector_arg(file_first_sector), 0xFF) != 0x00) {
         CART_CSR_STATUS = 0xE9;
         while (1) {}
     }
@@ -372,8 +451,7 @@ int main(void) {
     }
     spi_transfer(0xFF);
     spi_transfer(0xFF);
-    spi_set_cs(1);
-    spi_transfer(0xFF);
+    sd_deselect();
 
     CART_CSR_STATUS = 0x18;
     CART_CSR_STATUS = 0x1A;

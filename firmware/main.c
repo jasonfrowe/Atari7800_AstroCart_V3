@@ -12,6 +12,8 @@ typedef unsigned int   uint32_t;
 #define REG8(addr)  (*(volatile uint8_t  *)(addr))
 
 #define A78_HEADER_SIZE 128u
+#define A78_TITLE_OFFSET    17u
+#define A78_TITLE_LEN       32u
 
 #define A78_OFF_VERSION      0u
 #define A78_OFF_MAGIC        1u
@@ -25,6 +27,10 @@ typedef unsigned int   uint32_t;
 #define CART_FLAG_POKEY_440    (1u << 10)
 #define CART_FLAG_POKEY_800    (1u << 15)
 #define CART_FLAG_SUPERGAME    (1u << 1)
+
+#define MENU_TITLE_SLOT_BYTES  32u
+#define MENU_TITLE_SLOT_COUNT   8u
+#define MENU_TITLE_BASE        0xE800u
 
 #define V4_MAPPER_LINEAR       0u
 #define V4_MAPPER_SUPERGAME    1u
@@ -50,6 +56,28 @@ typedef unsigned int   uint32_t;
 #define CART_CSR_CTRL  REG32(0xC0000000)
 #define CART_CSR_STATUS REG32(0xC0000004)
 
+void *memset(void *dest, int value, unsigned int count) {
+    uint8_t *bytes = (uint8_t *)dest;
+    uint8_t fill = (uint8_t)value;
+    unsigned int i;
+
+    for (i = 0u; i < count; ++i) {
+        bytes[i] = fill;
+    }
+    return dest;
+}
+
+void *memcpy(void *dest, const void *src, unsigned int count) {
+    uint8_t *dst_bytes = (uint8_t *)dest;
+    const uint8_t *src_bytes = (const uint8_t *)src;
+    unsigned int i;
+
+    for (i = 0u; i < count; ++i) {
+        dst_bytes[i] = src_bytes[i];
+    }
+    return dest;
+}
+
 // SD init diagnostic status codes (hardware bring-up focused)
 #define SD_INIT_ERR_CMD0         0xF0u
 #define SD_INIT_ERR_CMD8         0xF1u
@@ -58,6 +86,29 @@ typedef unsigned int   uint32_t;
 #define SD_INIT_ERR_CMD16        0xF4u
 
 static uint8_t sd_is_high_capacity = 1u;
+
+static uint16_t read_le_u16(const uint8_t *p);
+static uint32_t read_le_u32(const uint8_t *p);
+static int sd_read_sector(uint32_t sector, uint8_t *buf);
+
+static uint8_t ascii_upper(uint8_t c) {
+    if (c >= 'a' && c <= 'z') {
+        return (uint8_t)(c - ('a' - 'A'));
+    }
+    return c;
+}
+
+static uint8_t is_a78_magic(const uint8_t *hdr) {
+    return (hdr[A78_OFF_MAGIC + 0u] == 'A' &&
+            hdr[A78_OFF_MAGIC + 1u] == 'T' &&
+            hdr[A78_OFF_MAGIC + 2u] == 'A' &&
+            hdr[A78_OFF_MAGIC + 3u] == 'R' &&
+            hdr[A78_OFF_MAGIC + 4u] == 'I' &&
+            hdr[A78_OFF_MAGIC + 5u] == '7' &&
+            hdr[A78_OFF_MAGIC + 6u] == '8' &&
+            hdr[A78_OFF_MAGIC + 7u] == '0' &&
+            hdr[A78_OFF_MAGIC + 8u] == '0');
+}
 
 // SPI Helper Functions
 static void spi_set_cs(uint8_t state) {
@@ -99,6 +150,226 @@ static uint32_t sd_sector_arg(uint32_t sector) {
         return sector;
     }
     return sector << 9;
+}
+
+static void menu_write_slot(uint8_t slot, const uint8_t *text) {
+    uint32_t base;
+    uint8_t i;
+
+    if (slot >= MENU_TITLE_SLOT_COUNT) {
+        return;
+    }
+
+    base = CART_RAM_BASE + MENU_TITLE_BASE + ((uint32_t)slot * MENU_TITLE_SLOT_BYTES);
+    for (i = 0u; i < (MENU_TITLE_SLOT_BYTES - 1u); ++i) {
+        uint8_t c = text[i];
+        if (c == 0u || c == 0x0Du || c == 0x0Au) {
+            break;
+        }
+        if (c < 0x20u || c > 0x7Eu) {
+            c = ' ';
+        }
+        REG8(base + i) = c;
+    }
+    REG8(base + i) = 0u;
+    for (++i; i < MENU_TITLE_SLOT_BYTES; ++i) {
+        REG8(base + i) = 0u;
+    }
+}
+
+static void menu_clear_titles(void) {
+    uint8_t slot;
+    uint8_t i;
+
+    for (slot = 0u; slot < MENU_TITLE_SLOT_COUNT; ++slot) {
+        uint32_t base = CART_RAM_BASE + MENU_TITLE_BASE + ((uint32_t)slot * MENU_TITLE_SLOT_BYTES);
+        for (i = 0u; i < MENU_TITLE_SLOT_BYTES; ++i) {
+            REG8(base + i) = 0u;
+        }
+    }
+}
+
+static uint8_t is_a78_rom_entry(const uint8_t *entry) {
+    uint8_t ext0;
+    uint8_t ext1;
+    uint8_t ext2;
+
+    if (entry[0] == 0u || entry[0] == 0xE5u) {
+        return 0u;
+    }
+    if (entry[11] == 0x0Fu) {
+        return 0u;
+    }
+    if ((entry[11] & 0x10u) != 0u) {
+        return 0u;
+    }
+    if ((entry[11] & 0x18u) != 0u) {
+        return 0u;
+    }
+
+    ext0 = ascii_upper(entry[8]);
+    ext1 = ascii_upper(entry[9]);
+    ext2 = ascii_upper(entry[10]);
+    return (ext0 == 'A' && ext1 == '7' && ext2 == '8');
+}
+
+static uint32_t fat32_next_cluster(uint32_t current_cluster, uint32_t fat_start_sector) {
+    uint8_t fat_sector[512];
+    uint32_t fat_byte_offset;
+    uint32_t fat_sector_lba;
+    uint16_t entry_off;
+    uint32_t next_cluster;
+
+    fat_byte_offset = current_cluster * 4u;
+    fat_sector_lba = fat_start_sector + (fat_byte_offset / 512u);
+    entry_off = (uint16_t)(fat_byte_offset & 511u);
+
+    if (sd_read_sector(fat_sector_lba, fat_sector) != 0) {
+        return 0x0FFFFFFFu;
+    }
+
+    next_cluster = read_le_u32(&fat_sector[entry_off]) & 0x0FFFFFFFu;
+    return next_cluster;
+}
+
+static void build_title_from_dir_name(const uint8_t *dir_entry, uint8_t *out_title) {
+    uint8_t i;
+    uint8_t o = 0u;
+
+    for (i = 0u; i < MENU_TITLE_SLOT_BYTES; ++i) {
+        out_title[i] = 0u;
+    }
+
+    for (i = 0u; i < 8u && o < (MENU_TITLE_SLOT_BYTES - 1u); ++i) {
+        uint8_t c = dir_entry[i];
+        if (c == ' ') {
+            break;
+        }
+        out_title[o++] = c;
+    }
+
+    if (o < (MENU_TITLE_SLOT_BYTES - 1u)) {
+        out_title[o++] = '.';
+    }
+
+    for (i = 8u; i < 11u && o < (MENU_TITLE_SLOT_BYTES - 1u); ++i) {
+        uint8_t c = dir_entry[i];
+        if (c == ' ') {
+            break;
+        }
+        out_title[o++] = c;
+    }
+
+    out_title[o] = 0u;
+}
+
+static void build_title_from_header_or_name(const uint8_t *file_sector,
+                                            const uint8_t *dir_entry,
+                                            uint8_t *out_title) {
+    uint8_t i;
+    uint8_t out_i = 0u;
+    uint8_t version;
+
+    for (i = 0u; i < (MENU_TITLE_SLOT_BYTES - 1u); ++i) {
+        out_title[i] = 0u;
+    }
+
+    if (file_sector != 0u) {
+        version = file_sector[A78_OFF_VERSION];
+    } else {
+        version = 0u;
+    }
+
+    if (file_sector != 0u && (version == 3u || version == 4u) && is_a78_magic(file_sector)) {
+        for (i = 0u; i < (A78_TITLE_LEN - 1u); ++i) {
+            uint8_t c = file_sector[A78_TITLE_OFFSET + i];
+            if (c == 0u) {
+                break;
+            }
+            if (c < 0x20u || c > 0x7Eu) {
+                c = ' ';
+            }
+            out_title[out_i++] = c;
+            if (out_i >= (MENU_TITLE_SLOT_BYTES - 1u)) {
+                break;
+            }
+        }
+
+        while (out_i > 0u && out_title[out_i - 1u] == ' ') {
+            out_i--;
+            out_title[out_i] = 0u;
+        }
+
+        if (out_i == 0u) {
+            build_title_from_dir_name(dir_entry, out_title);
+        }
+        return;
+    }
+
+    build_title_from_dir_name(dir_entry, out_title);
+}
+
+static void populate_menu_titles(uint32_t root_cluster,
+                                 uint32_t fat_start_sector,
+                                 uint32_t cluster_start_sector,
+                                 uint8_t sec_per_clus) {
+    uint8_t slot = 0u;
+    uint8_t dir_sector_buf[512];
+    uint8_t file_sector_buf[512];
+    uint8_t title_buf[MENU_TITLE_SLOT_BYTES];
+    uint32_t cluster = root_cluster;
+    uint16_t guard = 0u;
+
+    menu_clear_titles();
+
+    while (slot < MENU_TITLE_SLOT_COUNT && cluster >= 2u && cluster < 0x0FFFFFF8u && guard < 1024u) {
+        uint8_t sec_i;
+
+        for (sec_i = 0u; sec_i < sec_per_clus && slot < MENU_TITLE_SLOT_COUNT; ++sec_i) {
+            uint32_t dir_sector = cluster_start_sector
+                                + (cluster - 2u) * (uint32_t)sec_per_clus
+                                + (uint32_t)sec_i;
+            uint8_t entry_idx;
+
+            if (sd_read_sector(dir_sector, dir_sector_buf) != 0) {
+                continue;
+            }
+
+            for (entry_idx = 0u; entry_idx < 16u && slot < MENU_TITLE_SLOT_COUNT; ++entry_idx) {
+                const uint8_t *entry = &dir_sector_buf[(uint16_t)entry_idx * 32u];
+                uint32_t file_first_sector;
+                uint32_t file_first_cluster;
+
+                if (entry[0] == 0u) {
+                    return;
+                }
+
+                if (!is_a78_rom_entry(entry)) {
+                    continue;
+                }
+
+                file_first_cluster = ((uint32_t)read_le_u16(&entry[20u]) << 16)
+                                   | (uint32_t)read_le_u16(&entry[26u]);
+                if (file_first_cluster < 2u) {
+                    continue;
+                }
+
+                file_first_sector = cluster_start_sector
+                                  + (file_first_cluster - 2u) * (uint32_t)sec_per_clus;
+                if (sd_read_sector(file_first_sector, file_sector_buf) == 0) {
+                    build_title_from_header_or_name(file_sector_buf, entry, title_buf);
+                } else {
+                    build_title_from_header_or_name(0u, entry, title_buf);
+                }
+
+                menu_write_slot(slot, title_buf);
+                slot++;
+            }
+        }
+
+        cluster = fat32_next_cluster(cluster, fat_start_sector);
+        guard++;
+    }
 }
 
 static int sd_init(void) {
@@ -241,6 +512,7 @@ static uint32_t read_le_u32(const uint8_t *p) {
 // A78 Header Parser & Loader
 int main(void) {
     uint8_t sector_buf[512];
+    uint8_t root_dir_buf[512];
     uint8_t vbr_buf[512];
     uint8_t token;
     uint16_t bytes_per_sec;
@@ -397,31 +669,35 @@ int main(void) {
     spi_transfer(0xFF);
     sd_deselect();
 
+    for (int i = 0; i < 512; i++) {
+        root_dir_buf[i] = sector_buf[i];
+    }
+
     CART_CSR_STATUS = 0x17;
 
     // Stage 5 isolated gate: parse root directory entry and read file cluster 0.
     root_found = 0u;
     root_off = 0u;
     for (uint8_t off = 0u; off <= 3u; off++) {
-        if (sector_buf[off + 0u] == 'A' &&
-            sector_buf[off + 1u] == 'S' &&
-            sector_buf[off + 2u] == 'T' &&
-            sector_buf[off + 3u] == 'R' &&
-            sector_buf[off + 4u] == 'O' &&
-            sector_buf[off + 5u] == 'W' &&
-            sector_buf[off + 6u] == 'I' &&
-            sector_buf[off + 7u] == 'N' &&
-            sector_buf[off + 8u] == 'A' &&
-            sector_buf[off + 9u] == '7' &&
-            sector_buf[off + 10u] == '8') {
+        if (root_dir_buf[off + 0u] == 'A' &&
+            root_dir_buf[off + 1u] == 'S' &&
+            root_dir_buf[off + 2u] == 'T' &&
+            root_dir_buf[off + 3u] == 'R' &&
+            root_dir_buf[off + 4u] == 'O' &&
+            root_dir_buf[off + 5u] == 'W' &&
+            root_dir_buf[off + 6u] == 'I' &&
+            root_dir_buf[off + 7u] == 'N' &&
+            root_dir_buf[off + 8u] == 'A' &&
+            root_dir_buf[off + 9u] == '7' &&
+            root_dir_buf[off + 10u] == '8') {
             root_found = 1u;
             root_off = off;
             break;
         }
     }
     if (root_found) {
-        file_first_cluster = ((uint32_t)read_le_u16(&sector_buf[root_off + 20u]) << 16)
-                           | (uint32_t)read_le_u16(&sector_buf[root_off + 26u]);
+        file_first_cluster = ((uint32_t)read_le_u16(&root_dir_buf[root_off + 20u]) << 16)
+                           | (uint32_t)read_le_u16(&root_dir_buf[root_off + 26u]);
     } else {
         file_first_cluster = 0u;
     }
@@ -493,6 +769,8 @@ int main(void) {
         }
     }
     CART_CSR_STATUS = 0x1C;
+
+    populate_menu_titles(root_cluster, fat_start_sector, cluster_start_sector, sec_per_clus);
 
     volatile uint8_t sink = (uint8_t)(
         sector_buf[0] ^ sector_buf[1] ^

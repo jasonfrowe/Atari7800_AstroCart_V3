@@ -1,8 +1,8 @@
 # A7800 Instrumentation Plan
 
-This plan describes how to add a minimal cartridge-bus exporter to A7800 so the
-emulator can feed the Verilator replay harness with real Sally and MARIA access
-sequences.
+This plan describes how to use a pinned A7800 checkout as an external emulator
+module so the exporter can feed the Verilator replay harness with real Sally
+and MARIA access sequences.
 
 The target output schema is defined in [A7800_EXPORT_SCHEMA.md](A7800_EXPORT_SCHEMA.md).
 
@@ -42,10 +42,11 @@ Suggested runtime flags:
 
 ## Current Patch Status
 
-The first exporter slice is now implemented in the separate A7800 checkout at:
+The first exporter slice is now implemented in the SDK-pinned external module
+checkout at:
 
 ```text
-/Users/rowe/Software/a7800/src/mame/drivers/a7800.cpp
+third_party/a7800/src/mame/drivers/a7800.cpp
 ```
 
 Current behavior of that patch:
@@ -63,27 +64,28 @@ Current limitation of that first patch:
 
 ## Preferred Checkout
 
-The preferred A7800 checkout on this machine is:
+The preferred A7800 checkout in this repo is the pinned submodule copy:
 
 ```text
-/Users/rowe/Software/atari/a7800
+third_party/a7800
 ```
 
-It already had a cleaner macOS build path than `/Users/rowe/Software/a7800`, and the cart-bus exporter patch has now been ported there.
+It keeps the emulator version pinned alongside the Atari 7800 platform work,
+which is a better fit than a loose local install.
 
 ## Current Working Build Command
 
 The preferred A7800 checkout now builds on this machine with the following command:
 
 ```text
-cd /Users/rowe/Software/atari/a7800
+cd third_party/a7800
 make -j$(sysctl -n hw.ncpu)
 ```
 
 Resulting emulator binary:
 
 ```text
-/Users/rowe/Software/atari/a7800/mame64
+third_party/a7800/mame64
 ```
 
 ## Required Hook Points
@@ -197,14 +199,30 @@ A7800_CARTBUS_LIMIT=256
 
 Set those in the environment before launching the instrumented emulator build.
 
+## Memory Layout Notes
+
+The Verilator replay harness and the A7800 export path both assume the Atari
+7800's real cartridge layout:
+
+1. Main cartridge ROM window: `0x4000-0xFFFF`.
+2. Atari 7800 internal RAM window: `0x1800-0x27FF`.
+3. POKEY decode windows used by this project: `0x4000`, `0x0450`, and `0x0800`.
+
+That matters because the exporter should report real cartridge-visible cycles,
+while the replay harness should only compare bytes against ROM payload for the
+addresses that are actually ROM-backed. RAM, TIA, RIOT, and other console-owned
+regions should remain outside the ROM comparison path.
+
 ## Recommendation On Repo Layout
 
-Do not add A7800 as a submodule yet.
+Keep the emulator source external, but pinned.
 
-Use a separate checkout while developing the exporter so:
+Use the SDK's `third_party/a7800` checkout while developing the exporter so:
 
 - this repo stays focused on HDL and replay tooling
 - A7800 build churn does not pollute the FPGA workspace
 - the exporter patch can stabilize before you decide whether this project depends on a pinned emulator fork
 
-If the exporter becomes an ongoing dependency, add A7800 later as a pinned submodule under `extern/a7800` and keep only trace-generation instructions in this repo.
+If the emulator becomes a long-term dependency for this repo specifically,
+mirror the same pinned-external-module approach here rather than relying on an
+untracked local install.

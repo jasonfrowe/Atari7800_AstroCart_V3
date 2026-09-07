@@ -30,6 +30,13 @@ Fields:
 - `expected|?`: Optional expected read byte. Use `?` to auto-derive expected data from the loaded ROM payload for cartridge-space reads.
 - `IN|OUT`: Optional explicit transceiver direction expectation. `OUT` means the cartridge should be driving the bus, `IN` means it should be listening.
 
+Replay is intentionally limited to the 7800's cartridge-visible memory layout:
+
+- Compare ROM payload bytes only for cartridge-backed addresses.
+- Treat `0x1800-0x27FF` as internal RAM, not cartridge ROM.
+- Keep `0x4000`, `0x0450`, and `0x0800` POKEY decode windows as write-side bus checks, not ROM comparisons.
+- Leave console-owned TIA/RIOT cycles outside the ROM equality path.
+
 Example:
 
 ```text

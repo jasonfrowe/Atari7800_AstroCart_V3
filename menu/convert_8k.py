@@ -19,6 +19,44 @@ def sanitize_title(name: str) -> str:
     return filtered[:31]
 
 
+def sanitize_header_title(raw: bytes) -> str:
+    out = []
+    for b in raw:
+        if b == 0:
+            break
+        if 0x20 <= b <= 0x7E:
+            out.append(chr(b))
+        else:
+            out.append(" ")
+    return "".join(out).strip()[:31]
+
+
+def read_a78_header_title(file_path: str):
+    try:
+        with open(file_path, "rb") as f:
+            hdr = f.read(132)
+    except OSError:
+        return None
+
+    if len(hdr) < 128:
+        return None
+
+    for off in range(0, 5):
+        if off + 128 > len(hdr):
+            break
+        if hdr[off] == 0:
+            continue
+        if hdr[off + 1:off + 10] != b"ATARI7800":
+            continue
+
+        title = sanitize_header_title(hdr[off + 17:off + 49])
+        if title:
+            return title
+        return None
+
+    return None
+
+
 def collect_titles(base_dir: str):
     entries = []
     try:
@@ -32,7 +70,17 @@ def collect_titles(base_dir: str):
         return []
 
     entries.sort(key=str.lower)
-    return [sanitize_title(name) for name in entries[:8]]
+
+    titles = []
+    for name in entries[:8]:
+        full_path = os.path.join(base_dir, name)
+        header_title = read_a78_header_title(full_path)
+        if header_title:
+            titles.append(header_title)
+        else:
+            titles.append(sanitize_title(name))
+
+    return titles
 
 
 def pick_title_source(script_dir: str):

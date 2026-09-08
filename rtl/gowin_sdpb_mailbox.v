@@ -16,35 +16,21 @@ module gowin_sdpb_mailbox (
     input  wire [7:0] b_addr,
     output wire [7:0] b_rdata
 );
-
-`ifdef VERILATOR
-    reg [7:0] mem [0:255];
+    (* ram_style = "distributed", syn_ramstyle = "logic" *) reg [7:0] mem [0:255];
     reg [7:0] b_rdata_r;
 
     always @(posedge clk) begin
-        if (a_we) begin
-            mem[a_addr] <= a_wdata;
+        if (rst) begin
+            b_rdata_r <= 8'h00;
+        end else begin
+            if (a_we) begin
+                mem[a_addr] <= a_wdata;
+            end
+            b_rdata_r <= mem[b_addr];
         end
-        b_rdata_r <= mem[b_addr];
     end
 
     assign b_rdata = b_rdata_r;
-
-`else
-    Gowin_SDPB u_mailbox (
-        .dout   (b_rdata),
-        .clka   (clk),
-        .cea    (1'b1),
-        .reseta (rst),
-        .clkb   (clk),
-        .ceb    (1'b1),
-        .resetb (rst),
-        .oce    (1'b1),
-        .ada    (a_addr),
-        .din    (a_wdata),
-        .adb    (b_addr)
-    );
-`endif
 
 endmodule
 

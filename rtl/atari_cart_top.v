@@ -39,6 +39,14 @@ module atari_cart_top #(
     input  wire        sd_miso,      // Pin 39
     output wire        sd_clk,       // Pin 36
 
+    // On-board HyperRAM/PSRAM interface
+    output wire [0:0]  O_psram_ck,
+    output wire [0:0]  O_psram_ck_n,
+    output wire [0:0]  O_psram_cs_n,
+    output wire [0:0]  O_psram_reset_n,
+    inout  wire [0:0]  IO_psram_rwds,
+    inout  wire [7:0]  IO_psram_dq,
+
     // Debug LEDs
     output wire [5:0]  led
 );
@@ -153,6 +161,13 @@ module atari_cart_top #(
     wire       sideband_cart_ram_we;
     wire [15:0] sideband_cart_ram_addr;
     wire [7:0] sideband_cart_ram_wdata;
+    wire       sideband_psram_rd_req;
+    wire       sideband_psram_wr_req;
+    wire [21:0] sideband_psram_addr;
+    wire [15:0] sideband_psram_wdata;
+    wire       sideband_psram_byte_write;
+    wire [15:0] sideband_psram_rdata;
+    wire       sideband_psram_busy;
 
     generate
         if (H5_SIDEBAND_EN) begin : gen_h5_sideband
@@ -164,9 +179,18 @@ module atari_cart_top #(
             wire       svc_cart_ram_we;
             wire [15:0] svc_cart_ram_addr;
             wire [7:0] svc_cart_ram_wdata;
+            wire       svc_psram_rd_req;
+            wire       svc_psram_wr_req;
+            wire [21:0] svc_psram_addr;
+            wire [15:0] svc_psram_wdata;
+            wire       svc_psram_byte_write;
+            wire [15:0] svc_psram_rdata;
+            wire       svc_psram_busy;
 
             femtorv_service_soc #(
-                .FIRMWARE_HEX(FW_INIT_FILE)
+                .FIRMWARE_HEX(FW_INIT_FILE),
+                .LOCAL_IRAM_EN(H5_FW_RAM_EN),
+                .MAILBOX_EN(H5_MAILBOX_EN)
             ) u_service (
                 .clk        (clk),
                 .rst_n      (core_rst_n),
@@ -184,7 +208,36 @@ module atari_cart_top #(
                 .sd_cs      (svc_sd_cs),
                 .sd_mosi    (svc_sd_mosi),
                 .sd_miso    (sd_miso),
-                .sd_clk     (svc_sd_clk)
+                .sd_clk     (svc_sd_clk),
+                .psram_rd_req(svc_psram_rd_req),
+                .psram_wr_req(svc_psram_wr_req),
+                .psram_addr (svc_psram_addr),
+                .psram_wdata(svc_psram_wdata),
+                .psram_byte_write(svc_psram_byte_write),
+                .psram_rdata(svc_psram_rdata),
+                .psram_busy (svc_psram_busy)
+            );
+
+            // Service-only PSRAM controller path. Atari bus reads remain on BSRAM chunks.
+            PsramController #(
+                .FREQ(27_000_000),
+                .LATENCY(3)
+            ) u_service_psram (
+                .clk(clk),
+                .clk_p(clk),
+                .resetn(core_rst_n),
+                .read(svc_psram_rd_req),
+                .write(svc_psram_wr_req),
+                .addr(svc_psram_addr),
+                .din(svc_psram_wdata),
+                .byte_write(svc_psram_byte_write),
+                .dout(svc_psram_rdata),
+                .busy(svc_psram_busy),
+                .O_psram_ck(O_psram_ck),
+                .O_psram_ck_n(O_psram_ck_n),
+                .IO_psram_rwds(IO_psram_rwds),
+                .IO_psram_dq(IO_psram_dq),
+                .O_psram_cs_n(O_psram_cs_n)
             );
 
             assign sideband_sd_cs      = svc_sd_cs;
@@ -195,6 +248,13 @@ module atari_cart_top #(
             assign sideband_cart_ram_we = svc_cart_ram_we;
             assign sideband_cart_ram_addr = svc_cart_ram_addr;
             assign sideband_cart_ram_wdata = svc_cart_ram_wdata;
+            assign sideband_psram_rd_req = svc_psram_rd_req;
+            assign sideband_psram_wr_req = svc_psram_wr_req;
+            assign sideband_psram_addr = svc_psram_addr;
+            assign sideband_psram_wdata = svc_psram_wdata;
+            assign sideband_psram_byte_write = svc_psram_byte_write;
+            assign sideband_psram_rdata = svc_psram_rdata;
+            assign sideband_psram_busy = svc_psram_busy;
         end else begin : gen_no_h5_sideband
             assign sideband_sd_cs      = 1'b1;
             assign sideband_sd_mosi    = 1'b0;
@@ -204,8 +264,22 @@ module atari_cart_top #(
             assign sideband_cart_ram_we = 1'b0;
             assign sideband_cart_ram_addr = 16'h0000;
             assign sideband_cart_ram_wdata = 8'h00;
+            assign sideband_psram_rd_req = 1'b0;
+            assign sideband_psram_wr_req = 1'b0;
+            assign sideband_psram_addr = 22'h0;
+            assign sideband_psram_wdata = 16'h0;
+            assign sideband_psram_byte_write = 1'b0;
+            assign sideband_psram_rdata = 16'h0;
+            assign sideband_psram_busy = 1'b0;
+            assign O_psram_ck[0] = 1'b0;
+            assign O_psram_ck_n[0] = 1'b1;
+            assign O_psram_cs_n[0] = 1'b1;
+            assign IO_psram_dq = 8'hZZ;
+            assign IO_psram_rwds[0] = 1'bZ;
         end
     endgenerate
+
+    assign O_psram_reset_n[0] = 1'b1;
 
     assign sd_cs   = sideband_sd_cs;
     assign sd_mosi = sideband_sd_mosi;
@@ -247,7 +321,7 @@ module atari_cart_top #(
     // Cartridge ROM Memory
     // ------------------------------------------------------------------------
     wire [7:0] chunk_rdata [0:23];
-    wire [7:0] menu_chunk_rdata [0:3];
+    wire [7:0] menu_data_out;
     wire [4:0] cart_wr_chunk_sel = sideband_cart_ram_addr[15:11];
     wire [10:0] cart_wr_addr = sideband_cart_ram_addr[10:0];
 
@@ -276,15 +350,13 @@ module atari_cart_top #(
     cart_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd22)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
     cart_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd23)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
 
-    rom_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_menu_rom_00 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[0]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_menu_rom_01 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[1]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_menu_rom_02 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[2]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_menu_rom_03 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[3]));
+    menu_block_8k #(.INIT_FILE("menu_word_chunk_00.hex")) u_menu_rom (
+        .clk(clk),
+        .raddr(a_sync[12:0]),
+        .rdata(menu_data_out)
+    );
     wire [4:0] rom_chunk_sel = phys_rom_addr[15:11];
     wire [7:0] rom_data_out = (rom_chunk_sel < 5'd24) ? chunk_rdata[rom_chunk_sel] : 8'hFF;
-
-    wire [1:0] menu_chunk_sel = a_sync[12:11];
-    wire [7:0] menu_data_out = menu_chunk_rdata[menu_chunk_sel];
 
     // ------------------------------------------------------------------------
     // POKEY Sound Synthesizer Core Integration

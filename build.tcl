@@ -8,9 +8,12 @@ add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/fem
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/third_party/femtorv/femtorv32_quark.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/cart_block_2k.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/rom_block_2k.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/menu_block_8k.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/pokey_synth.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/audio_pwm.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/spi_sd.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/psram_controller.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/gowin_pll.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/gowin_sp_be32.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/gowin_sdpb_mailbox.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/ip/gowin/gowin_prom/gowin_prom.v"
@@ -32,7 +35,7 @@ add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/haz
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/hazard5/hdl/arith/hazard5_shift_barrel.v"
 add_file -type cst "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/atari.cst"
 add_file -type sdc "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/timing.sdc"
-set_option -top_module atari_cart_top
+set_option -top_module atari_cart_top_h5
 set_option -verilog_std sysv2017
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1

@@ -141,8 +141,8 @@ flash_loop
  flash_count = flash_count - 1
  if flash_count > 0 then goto flash_loop
  
- ; Bit 7 marks the write as a load request.
- fpga_trigger = selected_game + 128
+ ; Use 0x88..0x8F for slot load commands so 0x80/0x81 remain reserved for scan.
+ fpga_trigger = selected_game + 136
 
 wait_loop
  restorescreen

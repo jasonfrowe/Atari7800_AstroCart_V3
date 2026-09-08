@@ -15,7 +15,7 @@ module cart_block_2k #(
     input  wire [10:0] waddr,
     input  wire [7:0]  wdata
 );
-    reg [7:0] mem [0:2047];
+    (* ram_style = "block", syn_ramstyle = "block_ram" *) reg [7:0] mem [0:2047];
 
     initial begin
         if (INIT_FILE != "") begin

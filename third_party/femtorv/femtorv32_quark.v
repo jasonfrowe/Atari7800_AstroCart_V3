@@ -96,14 +96,115 @@ module FemtoRV32(
 
    reg [31:0] rs1;
    reg [31:0] rs2;
-   
-   (* no_rw_check *)
-   reg [31:0] registerFile [31:0];
+
+   reg [31:0] rf1;
+   reg [31:0] rf2;
+   reg [31:0] rf3;
+   reg [31:0] rf4;
+   reg [31:0] rf5;
+   reg [31:0] rf6;
+   reg [31:0] rf7;
+   reg [31:0] rf8;
+   reg [31:0] rf9;
+   reg [31:0] rf10;
+   reg [31:0] rf11;
+   reg [31:0] rf12;
+   reg [31:0] rf13;
+   reg [31:0] rf14;
+   reg [31:0] rf15;
+   reg [31:0] rf16;
+   reg [31:0] rf17;
+   reg [31:0] rf18;
+   reg [31:0] rf19;
+   reg [31:0] rf20;
+   reg [31:0] rf21;
+   reg [31:0] rf22;
+   reg [31:0] rf23;
+   reg [31:0] rf24;
+   reg [31:0] rf25;
+   reg [31:0] rf26;
+   reg [31:0] rf27;
+   reg [31:0] rf28;
+   reg [31:0] rf29;
+   reg [31:0] rf30;
+   reg [31:0] rf31;
+
+   function [31:0] rf_read;
+      input [4:0] idx;
+      begin
+         case (idx)
+            5'd1: rf_read = rf1;
+            5'd2: rf_read = rf2;
+            5'd3: rf_read = rf3;
+            5'd4: rf_read = rf4;
+            5'd5: rf_read = rf5;
+            5'd6: rf_read = rf6;
+            5'd7: rf_read = rf7;
+            5'd8: rf_read = rf8;
+            5'd9: rf_read = rf9;
+            5'd10: rf_read = rf10;
+            5'd11: rf_read = rf11;
+            5'd12: rf_read = rf12;
+            5'd13: rf_read = rf13;
+            5'd14: rf_read = rf14;
+            5'd15: rf_read = rf15;
+            5'd16: rf_read = rf16;
+            5'd17: rf_read = rf17;
+            5'd18: rf_read = rf18;
+            5'd19: rf_read = rf19;
+            5'd20: rf_read = rf20;
+            5'd21: rf_read = rf21;
+            5'd22: rf_read = rf22;
+            5'd23: rf_read = rf23;
+            5'd24: rf_read = rf24;
+            5'd25: rf_read = rf25;
+            5'd26: rf_read = rf26;
+            5'd27: rf_read = rf27;
+            5'd28: rf_read = rf28;
+            5'd29: rf_read = rf29;
+            5'd30: rf_read = rf30;
+            5'd31: rf_read = rf31;
+            default: rf_read = 32'b0;
+         endcase
+      end
+   endfunction
 
    always @(posedge clk) begin
      if (writeBack)
-       if (rdId != 0)
-         registerFile[rdId] <= writeBackData;
+          if (rdId != 0)
+             case (rdId)
+                5'd1: rf1 <= writeBackData;
+                5'd2: rf2 <= writeBackData;
+                5'd3: rf3 <= writeBackData;
+                5'd4: rf4 <= writeBackData;
+                5'd5: rf5 <= writeBackData;
+                5'd6: rf6 <= writeBackData;
+                5'd7: rf7 <= writeBackData;
+                5'd8: rf8 <= writeBackData;
+                5'd9: rf9 <= writeBackData;
+                5'd10: rf10 <= writeBackData;
+                5'd11: rf11 <= writeBackData;
+                5'd12: rf12 <= writeBackData;
+                5'd13: rf13 <= writeBackData;
+                5'd14: rf14 <= writeBackData;
+                5'd15: rf15 <= writeBackData;
+                5'd16: rf16 <= writeBackData;
+                5'd17: rf17 <= writeBackData;
+                5'd18: rf18 <= writeBackData;
+                5'd19: rf19 <= writeBackData;
+                5'd20: rf20 <= writeBackData;
+                5'd21: rf21 <= writeBackData;
+                5'd22: rf22 <= writeBackData;
+                5'd23: rf23 <= writeBackData;
+                5'd24: rf24 <= writeBackData;
+                5'd25: rf25 <= writeBackData;
+                5'd26: rf26 <= writeBackData;
+                5'd27: rf27 <= writeBackData;
+                5'd28: rf28 <= writeBackData;
+                5'd29: rf29 <= writeBackData;
+                5'd30: rf30 <= writeBackData;
+                default: rf31 <= writeBackData;
+             endcase
    end
 
    /***************************************************************************/
@@ -344,8 +445,8 @@ module FemtoRV32(
 
         state[WAIT_INSTR_bit]: begin
            if(!mem_rbusy) begin // may be high when executing from SPI flash
-              rs1 <= registerFile[mem_rdata[19:15]];
-              rs2 <= registerFile[mem_rdata[24:20]];
+              rs1 <= rf_read(mem_rdata[19:15]);
+              rs2 <= rf_read(mem_rdata[24:20]);
               instr <= mem_rdata[31:2]; // Bits 0 and 1 are ignored (see
               state <= EXECUTE;         // also the declaration of instr).
            end
@@ -384,7 +485,14 @@ module FemtoRV32(
    initial begin
       cycles = 0;
       aluShamt = 0;
-      registerFile[0] = 0;
+      rf1 = 0;  rf2 = 0;  rf3 = 0;  rf4 = 0;
+      rf5 = 0;  rf6 = 0;  rf7 = 0;  rf8 = 0;
+      rf9 = 0;  rf10 = 0; rf11 = 0; rf12 = 0;
+      rf13 = 0; rf14 = 0; rf15 = 0; rf16 = 0;
+      rf17 = 0; rf18 = 0; rf19 = 0; rf20 = 0;
+      rf21 = 0; rf22 = 0; rf23 = 0; rf24 = 0;
+      rf25 = 0; rf26 = 0; rf27 = 0; rf28 = 0;
+      rf29 = 0; rf30 = 0; rf31 = 0;
    end
 `endif
 

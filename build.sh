@@ -210,7 +210,7 @@ emit_h5_matrix_wrapper() {
 \`default_nettype none
 
 module atari_cart_top_h5_matrix #(
-    parameter FW_INIT_FILE = "firmware.hex"
+    parameter FW_INIT_FILE = "femtorv_firmware.hex"
 )(
     input  wire        clk,
     input  wire        phi2,
@@ -226,6 +226,12 @@ module atari_cart_top_h5_matrix #(
     output wire        sd_mosi,
     input  wire        sd_miso,
     output wire        sd_clk,
+    output wire [0:0]  O_psram_ck,
+    output wire [0:0]  O_psram_ck_n,
+    output wire [0:0]  O_psram_cs_n,
+    output wire [0:0]  O_psram_reset_n,
+    inout  wire [0:0]  IO_psram_rwds,
+    inout  wire [7:0]  IO_psram_dq,
     output wire [5:0]  led
 );
 
@@ -250,6 +256,12 @@ module atari_cart_top_h5_matrix #(
         .sd_mosi(sd_mosi),
         .sd_miso(sd_miso),
         .sd_clk (sd_clk),
+        .O_psram_ck(O_psram_ck),
+        .O_psram_ck_n(O_psram_ck_n),
+        .O_psram_cs_n(O_psram_cs_n),
+        .O_psram_reset_n(O_psram_reset_n),
+        .IO_psram_rwds(IO_psram_rwds),
+        .IO_psram_dq(IO_psram_dq),
         .led    (led)
     );
 
@@ -285,7 +297,7 @@ run_gowin_synthesis() {
     local h5_spi_en="${4:-1}"
     local use_femtorv_fw=0
 
-    if [ "$top_module" = "atari_cart_femtorv_test_top" ]; then
+    if [ "$top_module" = "atari_cart_femtorv_test_top" ] || [ "$top_module" = "atari_cart_top_h5" ] || [ "$top_module" = "atari_cart_top_h5_matrix" ]; then
         use_femtorv_fw=1
     fi
 
@@ -297,7 +309,7 @@ run_gowin_synthesis() {
     fi
 
     # Ensure memory hex files exist
-    make -C sim rom_chunk_00.hex
+    make -C sim rom_word_chunk_00.hex
     make -C firmware
     if [ "$use_femtorv_fw" -eq 1 ]; then
         make -C firmware femtorv
@@ -310,6 +322,8 @@ run_gowin_synthesis() {
     mkdir -p impl/gwsynthesis "$GOWIN_IDE/impl/gwsynthesis" "$GOWIN_IDE/impl/pnr"
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/"
+    cp sim/rom_word_chunk_*.hex "$PROJECT_DIR/"
+    cp sim/menu_word_chunk_*.hex "$PROJECT_DIR/"
     cp firmware/firmware.hex "$PROJECT_DIR/firmware.hex"
     if [ "$use_femtorv_fw" -eq 1 ]; then
         cp firmware/femtorv_firmware.hex "$PROJECT_DIR/femtorv_firmware.hex"
@@ -317,6 +331,8 @@ run_gowin_synthesis() {
 
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp sim/rom_word_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp sim/menu_word_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp firmware/firmware.hex "$PROJECT_DIR/impl/gwsynthesis/firmware.hex"
     if [ "$use_femtorv_fw" -eq 1 ]; then
         cp firmware/femtorv_firmware.hex "$PROJECT_DIR/impl/gwsynthesis/femtorv_firmware.hex"
@@ -324,6 +340,8 @@ run_gowin_synthesis() {
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/"
+    cp sim/rom_word_chunk_*.hex "$GOWIN_IDE/"
+    cp sim/menu_word_chunk_*.hex "$GOWIN_IDE/"
     cp firmware/firmware.hex "$GOWIN_IDE/firmware.hex"
     if [ "$use_femtorv_fw" -eq 1 ]; then
         cp firmware/femtorv_firmware.hex "$GOWIN_IDE/femtorv_firmware.hex"
@@ -331,6 +349,8 @@ run_gowin_synthesis() {
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp sim/rom_word_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp sim/menu_word_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp firmware/firmware.hex "$GOWIN_IDE/impl/gwsynthesis/firmware.hex"
     if [ "$use_femtorv_fw" -eq 1 ]; then
         cp firmware/femtorv_firmware.hex "$GOWIN_IDE/impl/gwsynthesis/femtorv_firmware.hex"
@@ -348,9 +368,12 @@ add_file -type verilog "$PROJECT_DIR/rtl/femtorv_service_soc.v"
 add_file -type verilog "$PROJECT_DIR/third_party/femtorv/femtorv32_quark.v"
 add_file -type verilog "$PROJECT_DIR/rtl/cart_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
+add_file -type verilog "$PROJECT_DIR/rtl/menu_block_8k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
 add_file -type verilog "$PROJECT_DIR/rtl/spi_sd.v"
+add_file -type verilog "$PROJECT_DIR/rtl/psram_controller.v"
+add_file -type verilog "$PROJECT_DIR/rtl/gowin_pll.v"
 add_file -type verilog "$PROJECT_DIR/rtl/gowin_sp_be32.v"
 add_file -type verilog "$PROJECT_DIR/rtl/gowin_sdpb_mailbox.v"
 add_file -type verilog "$PROJECT_DIR/rtl/ip/gowin/gowin_prom/gowin_prom.v"

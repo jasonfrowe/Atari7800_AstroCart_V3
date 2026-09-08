@@ -23,6 +23,12 @@ module atari_cart_femtorv_test_top #(
     output wire        sd_mosi,
     input  wire        sd_miso,
     output wire        sd_clk,
+    output wire [0:0]  O_psram_ck,
+    output wire [0:0]  O_psram_ck_n,
+    output wire [0:0]  O_psram_cs_n,
+    output wire [0:0]  O_psram_reset_n,
+    inout  wire [0:0]  IO_psram_rwds,
+    inout  wire [7:0]  IO_psram_dq,
     output wire [5:0]  led
 );
 
@@ -127,6 +133,12 @@ module atari_cart_femtorv_test_top #(
 
     assign irq = 1'b0;
     assign audio = 1'b0;
+    assign O_psram_ck[0] = 1'b0;
+    assign O_psram_ck_n[0] = 1'b1;
+    assign O_psram_cs_n[0] = 1'b1;
+    assign O_psram_reset_n[0] = 1'b1;
+    assign IO_psram_rwds[0] = 1'bZ;
+    assign IO_psram_dq = 8'hZZ;
 
     // LED map keeps both 7800 bus status and FemtoRV probe activity visible.
     assign led[0] = ~status_val[7];

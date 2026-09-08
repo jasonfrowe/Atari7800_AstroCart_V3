@@ -7,7 +7,9 @@
 `default_nettype none
 
 (* keep_hierarchy = "yes" *) module femtorv_service_soc #(
-    parameter FIRMWARE_HEX = "femtorv_firmware.hex"
+    parameter FIRMWARE_HEX = "femtorv_firmware.hex",
+    parameter LOCAL_IRAM_EN = 1'b1,
+    parameter MAILBOX_EN = 1'b1
 )(
     input  wire       clk,
     input  wire       rst_n,
@@ -25,7 +27,14 @@
     output wire       sd_cs,
     output wire       sd_mosi,
     input  wire       sd_miso,
-    output wire       sd_clk
+        output wire       sd_clk,
+        output reg        psram_rd_req,
+        output reg        psram_wr_req,
+        output reg [21:0] psram_addr,
+        output reg [15:0] psram_wdata,
+        output reg        psram_byte_write,
+        input  wire [15:0] psram_rdata,
+        input  wire       psram_busy
 );
 
     wire [31:0] mem_addr;
@@ -37,9 +46,10 @@
     wire        mem_wbusy;
 
     wire is_iram = (mem_addr[31:13] == 19'h00000);
-    wire is_dram = (mem_addr[31:13] == 19'h00001);
+    wire is_iram_hit = LOCAL_IRAM_EN && is_iram;
     wire is_spi  = (mem_addr[31:28] == 4'h4);
     wire is_csr  = (mem_addr[31:28] == 4'hC);
+        wire is_psram = (mem_addr[31:28] == 4'h2);
     wire is_cart_ram = (mem_addr[31:28] == 4'h8) || (mem_addr[31:28] == 4'hF);
 
     reg [10:0] iram_ad;
@@ -47,20 +57,19 @@
     reg [31:0] iram_din;
     wire [31:0] iram_dout;
 
-    reg [10:0] dram_ad;
-    reg [3:0]  dram_wre;
-    reg [31:0] dram_din;
-    wire [31:0] dram_dout;
-
     reg        read_pending;
     reg [2:0]  read_source;
     reg [31:0] read_addr;
 
     localparam [2:0] RD_NONE = 3'd0;
     localparam [2:0] RD_IRAM = 3'd1;
-    localparam [2:0] RD_DRAM = 3'd2;
-    localparam [2:0] RD_SPI  = 3'd3;
-    localparam [2:0] RD_CSR  = 3'd4;
+    localparam [2:0] RD_SPI  = 3'd2;
+    localparam [2:0] RD_CSR  = 3'd3;
+        localparam [2:0] RD_PSRAM = 3'd4;
+
+        reg       psram_busy_d;
+        reg [1:0] psram_rd_step;
+        reg [15:0] psram_rd_lo;
 
     reg        spi_cs_req;
     reg        spi_we_req;
@@ -90,7 +99,7 @@
     assign cpu_probe = {mem_rstrb, (|mem_wmask), mem_addr[4:0], spi_rdata[0]};
 
     always @(*) begin
-        if (cart_meta_sel) begin
+        if (MAILBOX_EN && cart_meta_sel) begin
             cart_rdata = meta_bank_cart ? meta1_rdata : meta0_rdata;
         end else begin
             cart_rdata = 8'hFF;
@@ -112,51 +121,57 @@
         .reset    (rst_n)
     );
 
-    gowin_sp_be32 #(
-        .INIT_FILE(FIRMWARE_HEX)
-    ) u_iram (
-        .clk   (clk),
-        .ce    (1'b1),
-        .oce   (1'b1),
-        .reset (~rst_n),
-        .ad    (iram_ad),
-        .din   (iram_din),
-        .wre   (iram_wre),
-        .dout  (iram_dout)
-    );
+    generate
+        if (LOCAL_IRAM_EN) begin : gen_local_iram
+            (* ram_style = "distributed" *) reg [31:0] iram_mem [0:2047];
+            reg [31:0] iram_dout_r;
 
-    gowin_sp_be32 #(
-        .INIT_FILE("")
-    ) u_dram (
-        .clk   (clk),
-        .ce    (1'b1),
-        .oce   (1'b1),
-        .reset (~rst_n),
-        .ad    (dram_ad),
-        .din   (dram_din),
-        .wre   (dram_wre),
-        .dout  (dram_dout)
-    );
+            assign iram_dout = iram_dout_r;
 
-    gowin_sdpb_mailbox u_meta_bank0 (
-        .clk    (clk),
-        .rst    (~rst_n),
-        .a_we   (meta0_we),
-        .a_addr (meta_addr[7:0]),
-        .a_wdata(meta_wdata),
-        .b_addr (meta_raddr_cart),
-        .b_rdata(meta0_rdata)
-    );
+            initial begin
+                if (FIRMWARE_HEX != "") begin
+                    $readmemh(FIRMWARE_HEX, iram_mem);
+                end
+            end
 
-    gowin_sdpb_mailbox u_meta_bank1 (
-        .clk    (clk),
-        .rst    (~rst_n),
-        .a_we   (meta1_we),
-        .a_addr (meta_addr[7:0]),
-        .a_wdata(meta_wdata),
-        .b_addr (meta_raddr_cart),
-        .b_rdata(meta1_rdata)
-    );
+            always @(posedge clk) begin
+                if (iram_wre[0]) iram_mem[iram_ad][7:0]   <= iram_din[7:0];
+                if (iram_wre[1]) iram_mem[iram_ad][15:8]  <= iram_din[15:8];
+                if (iram_wre[2]) iram_mem[iram_ad][23:16] <= iram_din[23:16];
+                if (iram_wre[3]) iram_mem[iram_ad][31:24] <= iram_din[31:24];
+                iram_dout_r <= iram_mem[iram_ad];
+            end
+        end else begin : gen_no_local_iram
+            assign iram_dout = 32'h0000_0000;
+        end
+    endgenerate
+
+    generate
+        if (MAILBOX_EN) begin : gen_mailbox
+            gowin_sdpb_mailbox u_meta_bank0 (
+                .clk    (clk),
+                .rst    (~rst_n),
+                .a_we   (meta0_we),
+                .a_addr (meta_addr[7:0]),
+                .a_wdata(meta_wdata),
+                .b_addr (meta_raddr_cart),
+                .b_rdata(meta0_rdata)
+            );
+
+            gowin_sdpb_mailbox u_meta_bank1 (
+                .clk    (clk),
+                .rst    (~rst_n),
+                .a_we   (meta1_we),
+                .a_addr (meta_addr[7:0]),
+                .a_wdata(meta_wdata),
+                .b_addr (meta_raddr_cart),
+                .b_rdata(meta1_rdata)
+            );
+        end else begin : gen_no_mailbox
+            assign meta0_rdata = 8'hFF;
+            assign meta1_rdata = 8'hFF;
+        end
+    endgenerate
 
     (* keep = "true", syn_keep = 1, dont_touch = "true" *) spi_sd u_spi (
         .clk     (clk),
@@ -183,9 +198,6 @@
             iram_ad      <= 11'd0;
             iram_wre     <= 4'b0000;
             iram_din     <= 32'h0;
-            dram_ad      <= 11'd0;
-            dram_wre     <= 4'b0000;
-            dram_din     <= 32'h0;
             mem_rdata    <= 32'h0;
             mem_rbusy    <= 1'b0;
             read_pending <= 1'b0;
@@ -200,14 +212,25 @@
             spi_we_req   <= 1'b0;
             spi_addr_req <= 2'b00;
             spi_wdata_req <= 8'h00;
+                psram_rd_req <= 1'b0;
+                psram_wr_req <= 1'b0;
+                psram_addr <= 22'h0;
+                psram_wdata <= 16'h0;
+                psram_byte_write <= 1'b0;
+                psram_busy_d <= 1'b0;
+                psram_rd_step <= 2'b00;
+                psram_rd_lo <= 16'h0;
             cart_ram_we  <= 1'b0;
             cart_ram_addr <= 16'h0000;
             cart_ram_wdata <= 8'h00;
         end else begin
             iram_wre   <= 4'b0000;
-            dram_wre   <= 4'b0000;
             meta_we    <= 1'b0;
             cart_ram_we <= 1'b0;
+                psram_rd_req <= 1'b0;
+                psram_wr_req <= 1'b0;
+                psram_byte_write <= 1'b0;
+                psram_busy_d <= psram_busy;
 
             // Continuously sample cart metadata read address for synchronous RAM B-port.
             meta_raddr_cart <= cart_meta_off;
@@ -221,14 +244,10 @@
                 spi_wdata_req <= 8'hFF;
             end
 
-            if ((|mem_wmask) && is_iram) begin
+            if ((|mem_wmask) && is_iram_hit) begin
                 iram_ad  <= mem_addr[12:2];
                 iram_din <= mem_wdata;
                 iram_wre <= mem_wmask;
-            end else if ((|mem_wmask) && is_dram) begin
-                dram_ad  <= mem_addr[12:2];
-                dram_din <= mem_wdata;
-                dram_wre <= mem_wmask;
             end else if ((|mem_wmask) && is_cart_ram) begin
                 cart_ram_we   <= 1'b1;
                 cart_ram_addr <= mem_addr[15:0];
@@ -244,7 +263,7 @@
                     cart_ram_wdata <= mem_wdata[31:24];
                     cart_ram_addr <= mem_addr[15:0] + 16'd3;
                 end
-            end else if ((|mem_wmask) && is_meta) begin
+            end else if (MAILBOX_EN && (|mem_wmask) && is_meta) begin
                 // Phase C firmware writes metadata window via byte stores.
                 if (mem_wmask[0]) begin
                     meta_we    <= 1'b1;
@@ -282,12 +301,9 @@
             if (!read_pending && mem_rstrb) begin
                 mem_rbusy <= 1'b1;
                 read_addr <= mem_addr;
-                if (is_iram) begin
+                if (is_iram_hit) begin
                     iram_ad <= mem_addr[12:2];
                     read_source <= RD_IRAM;
-                end else if (is_dram) begin
-                    dram_ad <= mem_addr[12:2];
-                    read_source <= RD_DRAM;
                 end else if (is_meta) begin
                     read_source <= RD_NONE;
                 end else if (is_spi) begin
@@ -297,6 +313,9 @@
                     read_source <= RD_SPI;
                 end else if (is_csr) begin
                     read_source <= RD_CSR;
+                    end else if (is_psram) begin
+                        read_source <= RD_PSRAM;
+                        psram_rd_step <= 2'b00;
                 end else begin
                     read_source <= RD_NONE;
                 end
@@ -304,7 +323,6 @@
             end else if (read_pending) begin
                 case (read_source)
                     RD_IRAM: mem_rdata <= iram_dout;
-                    RD_DRAM: mem_rdata <= dram_dout;
                     RD_SPI:  mem_rdata <= {24'h0, spi_rdata};
                     RD_CSR: begin
                         case (read_addr[5:2])
@@ -316,12 +334,47 @@
                             default: mem_rdata <= 32'h0;
                         endcase
                     end
+                        RD_PSRAM: begin
+                            case (psram_rd_step)
+                                2'b00: begin
+                                    if (!psram_busy) begin
+                                        psram_addr <= {read_addr[21:2], 2'b00};
+                                        psram_rd_req <= 1'b1;
+                                        psram_rd_step <= 2'b01;
+                                    end
+                                end
+                                2'b01: begin
+                                    if (psram_busy_d && !psram_busy) begin
+                                        psram_rd_lo <= psram_rdata;
+                                        psram_rd_step <= 2'b10;
+                                    end
+                                end
+                                2'b10: begin
+                                    if (!psram_busy) begin
+                                        psram_addr <= {read_addr[21:2], 2'b00} + 22'd2;
+                                        psram_rd_req <= 1'b1;
+                                        psram_rd_step <= 2'b11;
+                                    end
+                                end
+                                default: begin
+                                    if (psram_busy_d && !psram_busy) begin
+                                        mem_rdata <= {psram_rdata, psram_rd_lo};
+                                        read_pending <= 1'b0;
+                                        read_source  <= RD_NONE;
+                                        mem_rbusy    <= 1'b0;
+                                        psram_rd_step <= 2'b00;
+                                    end
+                                end
+                            endcase
+                        end
                     default: mem_rdata <= 32'h0;
                 endcase
 
-                read_pending <= 1'b0;
-                read_source  <= RD_NONE;
-                mem_rbusy    <= 1'b0;
+                    if (read_source != RD_PSRAM) begin
+                        read_pending <= 1'b0;
+                        read_source  <= RD_NONE;
+                        mem_rbusy    <= 1'b0;
+                    end
             end
         end
     end

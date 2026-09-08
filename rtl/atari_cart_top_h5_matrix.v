@@ -6,7 +6,7 @@
 `default_nettype none
 
 module atari_cart_top_h5_matrix #(
-    parameter FW_INIT_FILE = "firmware.hex"
+    parameter FW_INIT_FILE = "femtorv_firmware.hex"
 )(
     input  wire        clk,
     input  wire        phi2,
@@ -22,6 +22,12 @@ module atari_cart_top_h5_matrix #(
     output wire        sd_mosi,
     input  wire        sd_miso,
     output wire        sd_clk,
+    output wire [0:0]  O_psram_ck,
+    output wire [0:0]  O_psram_ck_n,
+    output wire [0:0]  O_psram_cs_n,
+    output wire [0:0]  O_psram_reset_n,
+    inout  wire [0:0]  IO_psram_rwds,
+    inout  wire [7:0]  IO_psram_dq,
     output wire [5:0]  led
 );
 
@@ -46,6 +52,12 @@ module atari_cart_top_h5_matrix #(
         .sd_mosi(sd_mosi),
         .sd_miso(sd_miso),
         .sd_clk (sd_clk),
+        .O_psram_ck(O_psram_ck),
+        .O_psram_ck_n(O_psram_ck_n),
+        .O_psram_cs_n(O_psram_cs_n),
+        .O_psram_reset_n(O_psram_reset_n),
+        .IO_psram_rwds(IO_psram_rwds),
+        .IO_psram_dq(IO_psram_dq),
         .led    (led)
     );
 

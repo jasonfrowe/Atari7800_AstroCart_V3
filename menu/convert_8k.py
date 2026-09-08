@@ -12,6 +12,84 @@ if not os.path.exists(src_path):
 with open(src_path, "r") as f:
     content = f.read()
 
+
+def sanitize_title(name: str) -> str:
+    stem = os.path.splitext(name)[0].replace("_", " ").strip()
+    filtered = "".join(ch if 0x20 <= ord(ch) <= 0x7E else " " for ch in stem)
+    return filtered[:31]
+
+
+def collect_titles(base_dir: str):
+    entries = []
+    try:
+        for entry in os.listdir(base_dir):
+            if entry.startswith("._"):
+                continue
+            full_path = os.path.join(base_dir, entry)
+            if os.path.isfile(full_path) and entry.lower().endswith(".a78"):
+                entries.append(entry)
+    except OSError:
+        return []
+
+    entries.sort(key=str.lower)
+    return [sanitize_title(name) for name in entries[:8]]
+
+
+def pick_title_source(script_dir: str):
+    default_dir = os.path.abspath(os.path.join(script_dir, "..", "carts"))
+    requested = os.environ.get("MENU_TITLE_SOURCE_DIR")
+
+    candidates = []
+    if requested:
+        req = os.path.abspath(requested)
+        candidates.append(req)
+        candidates.append(os.path.join(req, "ROMS"))
+    candidates.append(default_dir)
+
+    seen = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        titles = collect_titles(cand)
+        if titles:
+            return cand, titles
+
+    # No titles found anywhere. Keep first candidate for diagnostics.
+    return candidates[0], []
+
+
+def build_gamelist_rom_block():
+    # Default source is repo-local carts/. Caller may override with MENU_TITLE_SOURCE_DIR.
+    source_dir, titles = pick_title_source(script_dir)
+
+    slots = []
+    for i in range(8):
+        text = titles[i] if i < len(titles) else ""
+        row = [ord(ch) for ch in text]
+        row.append(0)
+        while len(row) < 32:
+            row.append(0)
+        slots.extend(row[:32])
+
+    asm_lines = [
+        "; --- RESERVED GAME LIST ROM BUFFER AT $E800-$E8FF (256 BYTES) ---",
+        " ORG $E800,0",
+        "gamelist_buffer",
+    ]
+
+    for i in range(0, len(slots), 16):
+        chunk = slots[i:i + 16]
+        bytes_txt = ", ".join(f"${b:02X}" for b in chunk)
+        asm_lines.append(f" .byte {bytes_txt}")
+
+    asm_lines.append("")
+
+    print(f"Title source: {source_dir}")
+    print(f"Embedded menu titles: {len(titles)}")
+
+    return "\n".join(asm_lines)
+
 # 1. Replace ROM32K symbol declaration with ROM8K
 content = content.replace("ROM32K     = 1", "ROM8K      = 1")
 content = content.replace("ROM32K = 1", "ROM8K = 1")
@@ -49,15 +127,7 @@ else:
     sys.exit(1)
 
 # 4. Define reserved 256-byte game list buffer at $E800 in ROM, and set game code start to ORG $E900,0
-gamelist_rom_block = """
-; --- RESERVED GAME LIST ROM BUFFER AT $E800-$E8FF (256 BYTES) ---
- ORG $E800,0
-gamelist_buffer
- .repeat 256
-    .byte $00
- .repend
-
-"""
+gamelist_rom_block = build_gamelist_rom_block()
 
 old_org_block = """     ifconst ROM8K
          ORG $E000,0

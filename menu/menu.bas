@@ -31,7 +31,7 @@
  ;
  ; Initialize variables
  ;
- game_count = 5  
+ game_count = 8
  selected_game = 0
  joy_delay = 0
  
@@ -76,14 +76,14 @@ draw_title
  ; Display titles from the metadata window populated by the A78 scan.
  ;
 draw_game_list
- if game_count > 0 then plotchars $E820 0 10 4
- if game_count > 1 then plotchars $E844 0 10 5
- if game_count > 2 then plotchars $E868 0 10 6
- if game_count > 3 then plotchars $E88C 0 10 7
- if game_count > 4 then plotchars $E8B0 0 10 8
- if game_count > 5 then plotchars $E8D4 0 10 9
- if game_count > 6 then plotchars $E8F8 0 10 10
- if game_count > 7 then plotchars $E91C 0 10 11
+ if game_count > 0 then plotchars $E800 0 10 4
+ if game_count > 1 then plotchars $E820 0 10 5
+ if game_count > 2 then plotchars $E840 0 10 6
+ if game_count > 3 then plotchars $E860 0 10 7
+ if game_count > 4 then plotchars $E880 0 10 8
+ if game_count > 5 then plotchars $E8A0 0 10 9
+ if game_count > 6 then plotchars $E8C0 0 10 10
+ if game_count > 7 then plotchars $E8E0 0 10 11
  return
  
  ;

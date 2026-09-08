@@ -11,6 +11,7 @@
 #   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
 #   ./build.sh --gowin-h5-sideband - Synthesizes with Hazard5 sideband top wrapper enabled
 #   ./build.sh --gowin-h5-matrix  - Runs full H5 sideband matrix (FW RAM / Mailbox / SPI)
+#   ./build.sh --gowin-femtorv-test - Synthesizes FemtoRV SRAM FAT test top wrapper
 #   ./build.sh --gowin-ip-report  - Shows whether Gowin/RTL IP modules were used in latest synthesis log
 #   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
 # ============================================================================
@@ -282,6 +283,11 @@ run_gowin_synthesis() {
     local h5_fw_ram_en="${2:-1}"
     local h5_mailbox_en="${3:-1}"
     local h5_spi_en="${4:-1}"
+    local use_femtorv_fw=0
+
+    if [ "$top_module" = "atari_cart_femtorv_test_top" ]; then
+        use_femtorv_fw=1
+    fi
 
     echo -e "\n${YELLOW}[Phase 5] Running Gowin EDA Synthesis & PnR...${NC}"
 
@@ -293,6 +299,9 @@ run_gowin_synthesis() {
     # Ensure memory hex files exist
     make -C sim rom_chunk_00.hex
     make -C firmware
+    if [ "$use_femtorv_fw" -eq 1 ]; then
+        make -C firmware femtorv
+    fi
 
     # Keep matrix wrapper available for all synthesis modes.
     emit_h5_matrix_wrapper "$h5_fw_ram_en" "$h5_mailbox_en" "$h5_spi_en"
@@ -302,18 +311,30 @@ run_gowin_synthesis() {
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/"
     cp firmware/firmware.hex "$PROJECT_DIR/firmware.hex"
+    if [ "$use_femtorv_fw" -eq 1 ]; then
+        cp firmware/femtorv_firmware.hex "$PROJECT_DIR/femtorv_firmware.hex"
+    fi
 
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp firmware/firmware.hex "$PROJECT_DIR/impl/gwsynthesis/firmware.hex"
+    if [ "$use_femtorv_fw" -eq 1 ]; then
+        cp firmware/femtorv_firmware.hex "$PROJECT_DIR/impl/gwsynthesis/femtorv_firmware.hex"
+    fi
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/"
     cp firmware/firmware.hex "$GOWIN_IDE/firmware.hex"
+    if [ "$use_femtorv_fw" -eq 1 ]; then
+        cp firmware/femtorv_firmware.hex "$GOWIN_IDE/femtorv_firmware.hex"
+    fi
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp firmware/firmware.hex "$GOWIN_IDE/impl/gwsynthesis/firmware.hex"
+    if [ "$use_femtorv_fw" -eq 1 ]; then
+        cp firmware/femtorv_firmware.hex "$GOWIN_IDE/impl/gwsynthesis/femtorv_firmware.hex"
+    fi
 
     BUILD_TCL="$PROJECT_DIR/build.tcl"
     cat > "$BUILD_TCL" << EOF
@@ -322,6 +343,9 @@ set_device GW1NR-LV9QN88PC6/I5 -name GW1NR-9C
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top.v"
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5.v"
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5_matrix.v"
+add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_femtorv_test_top.v"
+add_file -type verilog "$PROJECT_DIR/rtl/femtorv_service_soc.v"
+add_file -type verilog "$PROJECT_DIR/third_party/femtorv/femtorv32_quark.v"
 add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
@@ -346,6 +370,7 @@ add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_muldiv_seq.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_priority_encode.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_shift_barrel.v"
 add_file -type cst "$PROJECT_DIR/atari.cst"
+add_file -type sdc "$PROJECT_DIR/timing.sdc"
 set_option -top_module $top_module
 set_option -verilog_std sysv2017
 set_option -use_sspi_as_gpio 1
@@ -479,6 +504,9 @@ case "$MODE" in
     --gowin-h5-matrix)
         run_gowin_h5_matrix
         ;;
+    --gowin-femtorv-test)
+        run_gowin_synthesis atari_cart_femtorv_test_top
+        ;;
     --gowin-ip-report)
         report_gowin_ip_usage
         ;;
@@ -488,7 +516,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-h5-sideband | --gowin-h5-matrix | --gowin-ip-report | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-h5-sideband | --gowin-h5-matrix | --gowin-femtorv-test | --gowin-ip-report | --all]"
         exit 1
         ;;
 esac

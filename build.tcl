@@ -3,6 +3,9 @@ set_device GW1NR-LV9QN88PC6/I5 -name GW1NR-9C
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/atari_cart_top.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/atari_cart_top_h5.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/atari_cart_top_h5_matrix.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/atari_cart_femtorv_test_top.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/femtorv_service_soc.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/third_party/femtorv/femtorv32_quark.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/rom_block_2k.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/pokey_synth.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/audio_pwm.v"
@@ -27,6 +30,7 @@ add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/haz
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/hazard5/hdl/arith/hazard5_priority_encode.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/hazard5/hdl/arith/hazard5_shift_barrel.v"
 add_file -type cst "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/atari.cst"
+add_file -type sdc "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/timing.sdc"
 set_option -top_module atari_cart_top
 set_option -verilog_std sysv2017
 set_option -use_sspi_as_gpio 1

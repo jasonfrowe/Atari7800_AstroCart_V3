@@ -18,6 +18,9 @@
     output reg  [7:0] debug2,
     input  wire [15:0] cart_addr,
     output reg  [7:0] cart_rdata,
+    output reg         cart_ram_we,
+    output reg  [15:0] cart_ram_addr,
+    output reg  [7:0]  cart_ram_wdata,
     output wire [7:0] cpu_probe,
     output wire       sd_cs,
     output wire       sd_mosi,
@@ -37,6 +40,7 @@
     wire is_dram = (mem_addr[31:13] == 19'h00001);
     wire is_spi  = (mem_addr[31:28] == 4'h4);
     wire is_csr  = (mem_addr[31:28] == 4'hC);
+    wire is_cart_ram = (mem_addr[31:28] == 4'h8) || (mem_addr[31:28] == 4'hF);
 
     reg [10:0] iram_ad;
     reg [3:0]  iram_wre;
@@ -196,10 +200,14 @@
             spi_we_req   <= 1'b0;
             spi_addr_req <= 2'b00;
             spi_wdata_req <= 8'h00;
+            cart_ram_we  <= 1'b0;
+            cart_ram_addr <= 16'h0000;
+            cart_ram_wdata <= 8'h00;
         end else begin
             iram_wre   <= 4'b0000;
             dram_wre   <= 4'b0000;
             meta_we    <= 1'b0;
+            cart_ram_we <= 1'b0;
 
             // Continuously sample cart metadata read address for synchronous RAM B-port.
             meta_raddr_cart <= cart_meta_off;
@@ -221,6 +229,21 @@
                 dram_ad  <= mem_addr[12:2];
                 dram_din <= mem_wdata;
                 dram_wre <= mem_wmask;
+            end else if ((|mem_wmask) && is_cart_ram) begin
+                cart_ram_we   <= 1'b1;
+                cart_ram_addr <= mem_addr[15:0];
+                if (mem_wmask[0]) begin
+                    cart_ram_wdata <= mem_wdata[7:0];
+                end else if (mem_wmask[1]) begin
+                    cart_ram_wdata <= mem_wdata[15:8];
+                    cart_ram_addr <= mem_addr[15:0] + 16'd1;
+                end else if (mem_wmask[2]) begin
+                    cart_ram_wdata <= mem_wdata[23:16];
+                    cart_ram_addr <= mem_addr[15:0] + 16'd2;
+                end else if (mem_wmask[3]) begin
+                    cart_ram_wdata <= mem_wdata[31:24];
+                    cart_ram_addr <= mem_addr[15:0] + 16'd3;
+                end
             end else if ((|mem_wmask) && is_meta) begin
                 // Phase C firmware writes metadata window via byte stores.
                 if (mem_wmask[0]) begin

@@ -14,6 +14,7 @@
 #define CART_CSR_DEBUG0   REG8(0xC000000Cu)
 #define CART_CSR_DEBUG1   REG8(0xC0000010u)
 #define CART_CSR_DEBUG2   REG8(0xC0000014u)
+#define CART_RAM_BASE     0x80000000u
 
 #define META_BASE         0xE0000000u
 
@@ -80,6 +81,8 @@
 #define SLOT_FLAG_HAS_POKEY          0x20u
 #define SLOT_FLAG_TITLE_FALLBACK     0x40u
 
+#define GAME_LOAD_MAX_BYTES 49152u
+
 typedef struct {
     uint8_t mapper_class;
     uint8_t pokey_mode;
@@ -90,7 +93,16 @@ static uint16_t read_be_u16(const uint8_t *p);
 static void decode_legacy_profile(uint16_t cart_type, a78_profile_t *out);
 static void decode_v4_profile(uint8_t mapper_raw, uint8_t audio_raw, a78_profile_t *out);
 
-static FATFS g_fs;
+static void cart_ram_write_u8(uint16_t off, uint8_t value) {
+    REG8(CART_RAM_BASE + (uint32_t)off) = value;
+}
+
+static void cart_ram_fill(uint8_t value) {
+    uint16_t i;
+    for (i = 0u; i < (uint16_t)GAME_LOAD_MAX_BYTES; ++i) {
+        cart_ram_write_u8(i, value);
+    }
+}
 
 void loader_set_stage(BYTE stage) {
     CART_CSR_STATUS = stage;
@@ -354,6 +366,149 @@ static uint8_t build_path(uint8_t use_roms_subdir, const char *name, char *out_p
     return (o > 0u) ? 1u : 0u;
 }
 
+static uint8_t find_slot_path(uint8_t use_roms_subdir, uint8_t target_slot, char *out_path, uint8_t out_len, uint8_t *last_error) {
+    DIR dj;
+    FILINFO fi;
+    FRESULT fr;
+    const char *dir_path = use_roms_subdir ? "ROMS" : "";
+    uint8_t slot = 0u;
+
+    fr = pf_opendir(&dj, dir_path);
+    if (fr != FR_OK) {
+        *last_error = use_roms_subdir ? 0xD8u : 0xEAu;
+        return 0u;
+    }
+
+    while (1) {
+        fr = pf_readdir(&dj, &fi);
+        if (fr != FR_OK) {
+            *last_error = 0xEAu;
+            return 0u;
+        }
+        if (fi.fname[0] == 0u) {
+            break;
+        }
+        if ((fi.fattrib & AM_DIR) != 0u) {
+            continue;
+        }
+        if (!has_a78_extension(fi.fname)) {
+            continue;
+        }
+
+        if (slot == target_slot) {
+            if (!build_path(use_roms_subdir, fi.fname, out_path, out_len)) {
+                *last_error = 0xEAu;
+                return 0u;
+            }
+            return 1u;
+        }
+        ++slot;
+    }
+
+    *last_error = 0xD9u;
+    return 0u;
+}
+
+static uint8_t load_linear_slot(uint8_t slot, uint8_t *last_error) {
+    char path[32];
+    uint8_t hdr[A78_HEADER_SIZE];
+    uint8_t io_buf[128];
+    uint8_t hdr_off;
+    uint8_t version;
+    uint16_t cart_type;
+    uint32_t rom_size;
+    uint16_t dst;
+    uint32_t remaining;
+    a78_profile_t profile;
+    UINT br;
+    FRESULT fr;
+
+    if (!find_slot_path(1u, slot, path, sizeof(path), last_error)) {
+        if (!find_slot_path(0u, slot, path, sizeof(path), last_error)) {
+            return 0u;
+        }
+    }
+
+    loader_set_stage(0x31u);
+    fr = pf_open(path);
+    if (fr != FR_OK) {
+        *last_error = 0xEAu;
+        return 0u;
+    }
+
+    loader_set_stage(0x32u);
+    br = 0u;
+    fr = pf_read(hdr, A78_HEADER_SIZE, &br);
+    if (fr != FR_OK || br < A78_HEADER_SIZE) {
+        *last_error = 0xE9u;
+        return 0u;
+    }
+
+    hdr_off = find_a78_header_offset(hdr);
+    if (hdr_off == 0xFFu) {
+        *last_error = 0xD6u;
+        return 0u;
+    }
+
+    version = hdr[hdr_off + A78_OFF_VERSION];
+    if (version > 4u) {
+        *last_error = 0xD5u;
+        return 0u;
+    }
+
+    rom_size = read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]);
+    if (rom_size == 0u || rom_size > (uint32_t)GAME_LOAD_MAX_BYTES) {
+        *last_error = 0xD3u;
+        return 0u;
+    }
+
+    cart_type = read_be_u16(&hdr[hdr_off + A78_OFF_CART_TYPE]);
+    if (version >= 4u) {
+        decode_v4_profile(hdr[hdr_off + A78_OFF_V4_MAPPER], hdr[hdr_off + A78_OFF_V4_AUDIO], &profile);
+    } else {
+        decode_legacy_profile(cart_type, &profile);
+    }
+
+    if (profile.mapper_class != MAP_CLASS_LINEAR) {
+        *last_error = 0xD4u;
+        return 0u;
+    }
+
+    loader_set_stage(0x33u);
+    fr = pf_lseek((DWORD)((uint32_t)hdr_off + (uint32_t)A78_HEADER_SIZE));
+    if (fr != FR_OK) {
+        *last_error = 0xEAu;
+        return 0u;
+    }
+
+    cart_ram_fill(0xFFu);
+
+    remaining = rom_size;
+    dst = (uint16_t)((uint32_t)GAME_LOAD_MAX_BYTES - rom_size);
+    loader_set_stage(0x34u);
+    while (remaining > 0u) {
+        UINT request = (remaining > sizeof(io_buf)) ? (UINT)sizeof(io_buf) : (UINT)remaining;
+        br = 0u;
+        fr = pf_read(io_buf, request, &br);
+        if (fr != FR_OK || br == 0u) {
+            *last_error = 0xE9u;
+            return 0u;
+        }
+
+        for (UINT i = 0u; i < br; ++i) {
+            cart_ram_write_u8(dst, io_buf[i]);
+            ++dst;
+        }
+
+        remaining -= (uint32_t)br;
+    }
+
+    CART_CSR_DEBUG0 = version;
+    CART_CSR_DEBUG1 = profile.mapper_class;
+    CART_CSR_DEBUG2 = profile.pokey_mode;
+    return 1u;
+}
+
 static uint8_t scan_and_populate(uint8_t use_roms_subdir, uint8_t *valid_bitmap, uint8_t *entry_count, uint8_t *last_error) {
     DIR dj;
     FILINFO fi;
@@ -452,6 +607,7 @@ static uint8_t scan_and_populate(uint8_t use_roms_subdir, uint8_t *valid_bitmap,
 
 static void run_fat_scan(uint8_t use_roms_subdir) {
     FRESULT fr;
+    FATFS fs;
     uint8_t flags = META_FLAG_BUSY;
     uint8_t entry_count = 0u;
     uint8_t valid_bitmap = 0u;
@@ -474,7 +630,7 @@ static void run_fat_scan(uint8_t use_roms_subdir) {
     }
 
     loader_set_stage(0x13u);
-    fr = pf_mount(&g_fs);
+    fr = pf_mount(&fs);
     if (fr != FR_OK) {
         loader_set_stage(0xE2u);
         flags = (uint8_t)(META_FLAG_DONE | META_FLAG_ERROR);
@@ -505,6 +661,37 @@ static void run_fat_scan(uint8_t use_roms_subdir) {
     meta_set_header(flags, entry_count, valid_bitmap, last_error);
 }
 
+static void run_slot_load(uint8_t slot) {
+    FRESULT fr;
+    FATFS fs;
+    uint8_t last_error = 0u;
+
+    loader_set_stage(0x30u);
+
+    fr = (FRESULT)disk_initialize();
+    if (fr != 0) {
+        loader_set_stage(0xE0u);
+        return;
+    }
+
+    fr = pf_mount(&fs);
+    if (fr != FR_OK) {
+        loader_set_stage(0xE2u);
+        return;
+    }
+
+    if (!load_linear_slot(slot, &last_error)) {
+        CART_CSR_DEBUG0 = slot;
+        CART_CSR_DEBUG1 = last_error;
+        CART_CSR_DEBUG2 = 0xFFu;
+        // Preserve existing launch path semantics even if load is rejected.
+        loader_set_stage(0x80u);
+        return;
+    }
+
+    loader_set_stage(0x80u);
+}
+
 int main(void) {
     uint8_t last_cmd = 0x00u;
 
@@ -514,7 +701,11 @@ int main(void) {
         uint8_t cmd = CART_CSR_TRIGGER;
         if ((cmd != last_cmd) && (cmd & 0x80u)) {
             last_cmd = cmd;
-            run_fat_scan((uint8_t)(cmd & 0x01u));
+            if ((cmd == 0x80u) || (cmd == 0x81u)) {
+                run_fat_scan((uint8_t)(cmd & 0x01u));
+            } else {
+                run_slot_load((uint8_t)(cmd & 0x07u));
+            }
         }
     }
 

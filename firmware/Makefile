@@ -5,7 +5,7 @@ RISCV_OBJCOPY = riscv64-elf-objcopy
 PYTHON = python3
 
 CFLAGS = -march=rv32im -mabi=ilp32 -O2 -nostdlib -nostartfiles -T link.ld
-CFLAGS_FEMTORV = -march=rv32i -mabi=ilp32 -Os -nostdlib -nostartfiles -ffreestanding -fno-builtin -Ipetitfatfs -T link.ld
+CFLAGS_FEMTORV = -march=rv32i -mabi=ilp32 -Os -nostdlib -nostartfiles -ffreestanding -fno-builtin -fdata-sections -ffunction-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -Wl,--gc-sections -Ipetitfatfs -T link.ld
 
 SRCS = crt0.S main.c
 TARGET = firmware

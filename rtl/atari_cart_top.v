@@ -150,6 +150,9 @@ module atari_cart_top #(
     wire       sideband_sd_clk;
     wire [7:0] sideband_status_val;
     wire [7:0] sideband_meta_rdata;
+    wire       sideband_cart_ram_we;
+    wire [15:0] sideband_cart_ram_addr;
+    wire [7:0] sideband_cart_ram_wdata;
 
     generate
         if (H5_SIDEBAND_EN) begin : gen_h5_sideband
@@ -158,6 +161,9 @@ module atari_cart_top #(
             wire       svc_sd_clk;
             wire [7:0] svc_status_val;
             wire [7:0] svc_meta_rdata;
+            wire       svc_cart_ram_we;
+            wire [15:0] svc_cart_ram_addr;
+            wire [7:0] svc_cart_ram_wdata;
 
             femtorv_service_soc #(
                 .FIRMWARE_HEX(FW_INIT_FILE)
@@ -171,6 +177,9 @@ module atari_cart_top #(
                 .debug2     (),
                 .cart_addr  (a_sync),
                 .cart_rdata (svc_meta_rdata),
+                .cart_ram_we(svc_cart_ram_we),
+                .cart_ram_addr(svc_cart_ram_addr),
+                .cart_ram_wdata(svc_cart_ram_wdata),
                 .cpu_probe  (),
                 .sd_cs      (svc_sd_cs),
                 .sd_mosi    (svc_sd_mosi),
@@ -183,12 +192,18 @@ module atari_cart_top #(
             assign sideband_sd_clk     = svc_sd_clk;
             assign sideband_status_val = svc_status_val;
             assign sideband_meta_rdata = svc_meta_rdata;
+            assign sideband_cart_ram_we = svc_cart_ram_we;
+            assign sideband_cart_ram_addr = svc_cart_ram_addr;
+            assign sideband_cart_ram_wdata = svc_cart_ram_wdata;
         end else begin : gen_no_h5_sideband
             assign sideband_sd_cs      = 1'b1;
             assign sideband_sd_mosi    = 1'b0;
             assign sideband_sd_clk     = 1'b0;
             assign sideband_status_val = game_ready ? 8'h80 : 8'h00;
             assign sideband_meta_rdata = 8'hFF;
+            assign sideband_cart_ram_we = 1'b0;
+            assign sideband_cart_ram_addr = 16'h0000;
+            assign sideband_cart_ram_wdata = 8'h00;
         end
     endgenerate
 
@@ -233,31 +248,33 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     wire [7:0] chunk_rdata [0:23];
     wire [7:0] menu_chunk_rdata [0:3];
+    wire [4:0] cart_wr_chunk_sel = sideband_cart_ram_addr[15:11];
+    wire [10:0] cart_wr_addr = sideband_cart_ram_addr[10:0];
 
-    rom_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_04.hex")) u_rom_04 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[4]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_05.hex")) u_rom_05 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[5]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_06.hex")) u_rom_06 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[6]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_07.hex")) u_rom_07 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[7]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_08.hex")) u_rom_08 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[8]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_09.hex")) u_rom_09 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[9]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_10.hex")) u_rom_10 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[10]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_11.hex")) u_rom_11 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[11]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_12.hex")) u_rom_12 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[12]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_13.hex")) u_rom_13 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[13]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_14.hex")) u_rom_14 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[14]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_15.hex")) u_rom_15 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[15]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_16.hex")) u_rom_16 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[16]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_17.hex")) u_rom_17 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[17]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_18.hex")) u_rom_18 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[18]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_19.hex")) u_rom_19 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[19]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_20.hex")) u_rom_20 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[20]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_21.hex")) u_rom_21 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[21]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]));
+    cart_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd0)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd1)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd2)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd3)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_04.hex")) u_rom_04 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[4]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd4)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_05.hex")) u_rom_05 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[5]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd5)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_06.hex")) u_rom_06 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[6]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd6)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_07.hex")) u_rom_07 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[7]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd7)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_08.hex")) u_rom_08 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[8]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd8)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_09.hex")) u_rom_09 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[9]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd9)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_10.hex")) u_rom_10 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[10]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd10)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_11.hex")) u_rom_11 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[11]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd11)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_12.hex")) u_rom_12 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[12]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd12)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_13.hex")) u_rom_13 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[13]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd13)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_14.hex")) u_rom_14 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[14]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd14)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_15.hex")) u_rom_15 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[15]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd15)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_16.hex")) u_rom_16 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[16]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd16)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_17.hex")) u_rom_17 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[17]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd17)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_18.hex")) u_rom_18 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[18]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd18)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_19.hex")) u_rom_19 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[19]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd19)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_20.hex")) u_rom_20 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[20]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd20)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_21.hex")) u_rom_21 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[21]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd21)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd22)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    cart_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd23)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
 
     rom_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_menu_rom_00 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[0]));
     rom_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_menu_rom_01 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[1]));

@@ -80,6 +80,9 @@ module atari_cart_femtorv_test_top #(
     (* syn_keep = 1 *) wire [7:0] debug2;
     (* syn_keep = 1 *) wire [7:0] cpu_probe;
     (* syn_keep = 1 *) wire [7:0] menu_meta_rdata;
+    (* syn_keep = 1 *) wire       cart_ram_we;
+    (* syn_keep = 1 *) wire [15:0] cart_ram_addr;
+    (* syn_keep = 1 *) wire [7:0] cart_ram_wdata;
 
     (* keep = "true", syn_keep = 1, dont_touch = "true" *) femtorv_service_soc #(
         .FIRMWARE_HEX(FIRMWARE_HEX)
@@ -93,6 +96,9 @@ module atari_cart_femtorv_test_top #(
         .debug2     (debug2),
         .cart_addr  (a_sync),
         .cart_rdata (menu_meta_rdata),
+        .cart_ram_we(cart_ram_we),
+        .cart_ram_addr(cart_ram_addr),
+        .cart_ram_wdata(cart_ram_wdata),
         .cpu_probe  (cpu_probe),
         .sd_cs      (sd_cs),
         .sd_mosi    (sd_mosi),

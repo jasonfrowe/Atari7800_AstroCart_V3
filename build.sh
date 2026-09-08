@@ -153,7 +153,16 @@ report_gowin_ip_usage() {
 
     echo
     echo "[2] Module compile/use markers"
-    rg -n "Compiling module 'rom_block_2k|Compiling module 'hazard5_soc|Compiling module 'gowin_sp_be32|Gowin_pROM|Gowin_SP|Gowin_SDPB|Extracting RAM for identifier 'mem'" "$log_path" || true
+    rg -n "Compiling module 'rom_block_2k|Compiling module 'hazard5_soc|Compiling module 'gowin_sp_be32|Compiling module 'gowin_sdpb_mailbox|Gowin_pROM|Gowin_SP|Gowin_SDPB|Extracting RAM for identifier 'mem'" "$log_path" || true
+
+    echo
+    echo "[2a] Top-level instantiation check"
+    if rg -q "hazard5_soc[[:space:]]*#|hazard5_soc[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\(" "$PROJECT_DIR/rtl/atari_cart_top.v"; then
+        echo "hazard5_soc appears instantiated in rtl/atari_cart_top.v"
+    else
+        echo "hazard5_soc is NOT instantiated in rtl/atari_cart_top.v"
+        echo "Result: Gowin/Hazard5 mailbox modules can be analyzed but not contribute to live logic."
+    fi
 
     echo
     echo "[3] Sweep warnings for memory blocks"

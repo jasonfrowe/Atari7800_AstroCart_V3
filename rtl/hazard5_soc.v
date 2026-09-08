@@ -76,11 +76,13 @@ module hazard5_soc #(
     // - 0x4000_0000 - 0x4000_000F: SPI MicroSD Controller
     // - 0x8000_0000 - 0x8000_FFFF: Cartridge RAM Write Target
     // - 0xC000_0000 - 0xC000_000F: Cartridge CSRs
+    // - 0xD000_0000 - 0xD000_00FF: Mailbox RAM (256 x 8)
     // ------------------------------------------------------------------------
     wire is_fw_ram   = (cpu_haddr[31:28] == 4'h0);
     wire is_spi_sd   = (cpu_haddr[31:28] == 4'h4);
     wire is_cart_ram = (cpu_haddr[31:28] == 4'h8 || cpu_haddr[31:28] == 4'hF);
     wire is_csr      = (cpu_haddr[31:28] == 4'hC);
+    wire is_mailbox  = (cpu_haddr[31:28] == 4'hD);
 
     wire ahb_transfer = (cpu_htrans[1] == 1'b1); // HTRANS_NONSEQ or HTRANS_SEQ
 
@@ -94,6 +96,13 @@ module hazard5_soc #(
                           (cpu_hsize == 2'b01) ? (cpu_haddr[1] ? 4'b1100 : 4'b0011) :
                           (4'b0001 << cpu_haddr[1:0]);
 
+    wire mailbox_we = is_mailbox && ahb_transfer && cpu_hwrite && (|fw_wstrb);
+    wire [7:0] mailbox_wdata = fw_wstrb[0] ? cpu_hwdata[7:0] :
+                               fw_wstrb[1] ? cpu_hwdata[15:8] :
+                               fw_wstrb[2] ? cpu_hwdata[23:16] :
+                                             cpu_hwdata[31:24];
+    wire [7:0] mailbox_rdata;
+
     gowin_sp_be32 #(
         .INIT_FILE(FIRMWARE_HEX)
     ) u_fw_ram (
@@ -105,6 +114,16 @@ module hazard5_soc #(
         .din   (cpu_hwdata),
         .wre   (fw_we ? fw_wstrb : 4'b0000),
         .dout  (fw_ram_rdata)
+    );
+
+    gowin_sdpb_mailbox u_mailbox_ram (
+        .clk     (clk),
+        .rst     (~rst_n),
+        .a_we    (mailbox_we),
+        .a_addr  (cpu_haddr[9:2]),
+        .a_wdata (mailbox_wdata),
+        .b_addr  (cpu_haddr[9:2]),
+        .b_rdata (mailbox_rdata)
     );
 
     // ------------------------------------------------------------------------
@@ -129,6 +148,7 @@ module hazard5_soc #(
     reg is_fw_ram_rphase;
     reg is_spi_sd_rphase;
     reg is_csr_rphase;
+    reg is_mailbox_rphase;
     reg [1:0] spi_raddr_reg;
     reg [1:0] csr_raddr_reg;
     reg [1:0] fw_raddr_offset_reg;
@@ -139,6 +159,7 @@ module hazard5_soc #(
             is_fw_ram_rphase    <= 1'b0;
             is_spi_sd_rphase    <= 1'b0;
             is_csr_rphase       <= 1'b0;
+            is_mailbox_rphase   <= 1'b0;
             spi_raddr_reg       <= 2'b00;
             csr_raddr_reg       <= 2'b00;
             fw_raddr_offset_reg <= 2'b00;
@@ -148,6 +169,7 @@ module hazard5_soc #(
                 is_fw_ram_rphase    <= is_fw_ram;
                 is_spi_sd_rphase    <= is_spi_sd;
                 is_csr_rphase       <= is_csr;
+                is_mailbox_rphase   <= is_mailbox;
                 spi_raddr_reg       <= cpu_haddr[3:2];
                 csr_raddr_reg       <= cpu_haddr[3:2];
                 fw_raddr_offset_reg <= cpu_haddr[1:0];
@@ -156,6 +178,7 @@ module hazard5_soc #(
                 is_fw_ram_rphase <= 1'b0;
                 is_spi_sd_rphase <= 1'b0;
                 is_csr_rphase    <= 1'b0;
+                is_mailbox_rphase <= 1'b0;
             end
         end
     end
@@ -247,6 +270,7 @@ module hazard5_soc #(
 
     assign cpu_hrdata = is_fw_ram_rphase ? fw_ram_rdata :
                         is_spi_sd_rphase ? {24'h0, spi_rdata} :
+                        is_mailbox_rphase ? {24'h0, mailbox_rdata} :
                         is_csr_rphase    ? csr_rdata : 32'h0;
 
     assign cpu_hready = 1'b1; // Zero wait-state bus

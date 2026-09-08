@@ -1,6 +1,8 @@
 #!/bin/bash
 # Build script for Atari 7800 menu program (8KB ROM Version)
 
+set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASIC_PATH="/Users/rowe/Software/Atari7800/7800basic"
 
@@ -12,8 +14,17 @@ cd "${SCRIPT_DIR}"
 # Ensure 8KB variable redefinition in 7800basic_variable_redefs.h
 sed -i '' 's/ROM32K = 1/ROM8K = 1/g' 7800basic_variable_redefs.h 2>/dev/null || true
 
+# Remove generated artifacts so we never reuse stale timeout-era output.
+rm -f menu.bas.asm menu_8k.asm
+
 # Preprocess menu.bas with 7800basic
-${BASIC_PATH}/7800basic.sh menu.bas > /dev/null 2>&1 || true
+"${BASIC_PATH}/7800basic.sh" menu.bas
+
+if [ ! -f menu.bas.asm ]; then
+    echo ""
+    echo "✗ 7800basic did not generate menu.bas.asm"
+    exit 1
+fi
 
 # Generate menu_8k.asm
 python3 "${SCRIPT_DIR}/convert_8k.py"

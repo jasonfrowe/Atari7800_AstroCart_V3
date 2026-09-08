@@ -6,26 +6,34 @@
 0.calledfunction_div8    0000 ????         (R )
 0.calledfunction_mul16   0000 ????         (R )
 0.calledfunction_mul8    0000 ????         (R )
-0.check_input            ebd5              (R )
+0.check_input            ec05              (R )
 0.condpart0              e953                  
 0.condpart1              e960                  
-0.condpart2              ebdc                  
-0.condpart3              ebee                  
-0.condpart4              ebfe                  
-0.condpart5              ec03                  
-0.condpart6              ec14                  
-0.condpart7              ec21                  
-0.condpart8              ec2b                  
-0.condpart9              ec4f                  
-0.copy_handover_stub     ec67              (R )
-0.draw_cursor            eaab              (R )
+0.condpart10             ec0c                  
+0.condpart11             ec1e                  
+0.condpart12             ec2e                  
+0.condpart13             ec33                  
+0.condpart14             ec44                  
+0.condpart15             ec51                  
+0.condpart16             ec5b                  
+0.condpart17             ec7f                  
+0.condpart2              e9c0                  
+0.condpart3              e9e4                  
+0.condpart4              ea08                  
+0.condpart5              ea2c                  
+0.condpart6              ea50                  
+0.condpart7              ea74                  
+0.condpart8              ea98                  
+0.condpart9              eabc                  
+0.copy_handover_stub     ec97              (R )
+0.draw_cursor            eadb              (R )
 0.draw_game_list         e9ba              (R )
 0.draw_title             e969              (R )
-0.flash_loop             ec34              (R )
-0.handover_stub_code     ec76              (R )
+0.flash_loop             ec64              (R )
+0.handover_stub_code     eca6              (R )
 0.HSselect               0000 ????         (R )
 0.HSup                   0000 ????         (R )
-0.keep_waiting           ec7c              (R )
+0.keep_waiting           ecac              (R )
 0.L00                    e900                  
 0.L01                    e900                  
 0.L010                   e92f                  
@@ -54,86 +62,94 @@
 0.L031                   e990                  
 0.L032                   e9b9                  
 0.L033                   e9ba                  
-0.L034                   e9d8                  
-0.L035                   e9f6                  
-0.L036                   ea14                  
-0.L037                   ea32                  
-0.L038                   ea50                  
-0.L039                   ea6e                  
+0.L034                   e9de                  
+0.L035                   ea02                  
+0.L036                   ea26                  
+0.L037                   ea4a                  
+0.L038                   ea6e                  
+0.L039                   ea92                  
 0.L04                    e907                  
-0.L040                   ea8c                  
-0.L041                   eaaa                  
-0.L042                   eaab                  
-0.L043                   eac8                  
-0.L044                   eae5                  
-0.L045                   eb02                  
-0.L046                   eb1f                  
-0.L047                   eb3c                  
-0.L048                   eb59                  
-0.L049                   eb76                  
+0.L040                   eab6                  
+0.L041                   eada                  
+0.L042                   eadb                  
+0.L043                   eaf8                  
+0.L044                   eb15                  
+0.L045                   eb32                  
+0.L046                   eb4f                  
+0.L047                   eb6c                  
+0.L048                   eb89                  
+0.L049                   eba6                  
 0.L05                    e90b                  
-0.L050                   eb93                  
-0.L051                   ebb0                  
-0.L052                   ebb7                  
-0.L053                   ebd4                  
-0.L054                   ebd5                  
-0.L055                   ebe7                  
-0.L056                   ebf9                  
-0.L057                   ec0f                  
-0.L058                   ec1b                  
-0.L059                   ec25                  
+0.L050                   ebc3                  
+0.L051                   ebe0                  
+0.L052                   ebe7                  
+0.L053                   ec04                  
+0.L054                   ec05                  
+0.L055                   ec17                  
+0.L056                   ec29                  
+0.L057                   ec3f                  
+0.L058                   ec4b                  
+0.L059                   ec55                  
 0.L06                    e90b                  
-0.L060                   ec2f                  
-0.L061                   ec30                  
-0.L062                   ec34                  
-0.L063                   ec38                  
-0.L064                   ec3b                  
-0.L065                   ec3f                  
-0.L066                   ec42                  
-0.L067                   ec49                  
-0.L068                   ec52                  
-0.L069                   ec5a                  
+0.L060                   ec5f                  
+0.L061                   ec60                  
+0.L062                   ec64                  
+0.L063                   ec68                  
+0.L064                   ec6b                  
+0.L065                   ec6f                  
+0.L066                   ec72                  
+0.L067                   ec79                  
+0.L068                   ec82                  
+0.L069                   ec8a                  
 0.L07                    e917                  
-0.L070                   ec5d                  
-0.L071                   ec60                  
-0.L072                   ec7c                  
+0.L070                   ec8d                  
+0.L071                   ec90                  
+0.L072                   ecac                  
 0.L08                    e923                  
 0.L09                    e92f                  
 0.main_loop              e947              (R )
 0.pause                  0000 ????         (R )
-0.select_game            ec30              (R )
-0.select_game_end        ec1b              (R )
+0.select_game            ec60              (R )
+0.select_game_end        ec4b              (R )
+0.skip12then             ec3f              (R )
 0.skip1bjoyfirecheck     f1b7              (R )
-0.skip4then              ec0f              (R )
 0.skipL026               e95a              (R )
 0.skipL027               e963              (R )
-0.skipL054               ebe7              (R )
-0.skipL055               ebf9              (R )
-0.skipL056               ec0f              (R )
-0.skipL057               ec1b              (R )
-0.skipL058               ec25              (R )
-0.skipL059               ec2f              (R )
-0.skipL067               ec52              (R )
+0.skipL033               e9de              (R )
+0.skipL034               ea02              (R )
+0.skipL035               ea26              (R )
+0.skipL036               ea4a              (R )
+0.skipL037               ea6e              (R )
+0.skipL038               ea92              (R )
+0.skipL039               eab6              (R )
+0.skipL040               eada              (R )
+0.skipL054               ec17              (R )
+0.skipL055               ec29              (R )
+0.skipL056               ec3f              (R )
+0.skipL057               ec4b              (R )
+0.skipL058               ec55              (R )
+0.skipL059               ec5f              (R )
+0.skipL067               ec82              (R )
 0.topscreenroutine       0000 ????         (R )
 0.userinterrupt          0000 ????         (R )
-0.wait_loop              ec5a              (R )
+0.wait_loop              ec8a              (R )
 _RSYNC                   0003                  
 _WSYNC                   0002                  
-A                        00e6                  
 a                        00e6                  
+A                        00e6                  
 advancesfxpointer        f271              (R )
 alphadata0               e96c              (R )
 alphadata1               e993              (R )
-alphadata10              eb96              (R )
-alphadata11              ebba              (R )
-alphadata2               eaae              (R )
-alphadata3               eacb              (R )
-alphadata4               eae8              (R )
-alphadata5               eb05              (R )
-alphadata6               eb22              (R )
-alphadata7               eb3f              (R )
-alphadata8               eb5c              (R )
-alphadata9               eb79              (R )
+alphadata10              ebc6              (R )
+alphadata11              ebea              (R )
+alphadata2               eade              (R )
+alphadata3               eafb              (R )
+alphadata4               eb18              (R )
+alphadata5               eb35              (R )
+alphadata6               eb52              (R )
+alphadata7               eb6f              (R )
+alphadata8               eb8c              (R )
+alphadata9               eba9              (R )
 ALWAYSTERMINATE          0000 ????         (R )
 ATOMICSPRITEUPDATE       0000 ????         (R )
 AUDC0                    0015              (R )
@@ -170,8 +186,8 @@ buttonhandlerlo          f1df              (R )
 buttonreadloop           f041              (R )
 buttonreadloopreturn     f057              (R )
 BUZZBASS                 0000 ????         (R )
-c                        00e8                  
 C                        00e8                  
+c                        00e8                  
 canary                   01c2              (R )
 CANARYOFF                0000 ????         (R )
 carryonpausing           f127              (R )
@@ -205,8 +221,8 @@ CTLSWB                   0283              (R )
 CTRL                     003c              (R )
 currentbank              2104                  
 currentrambank           2105                  
-D                        00e9                  
 d                        00e9                  
+D                        00e9                  
 DBOFFSET                 0070                  
 DEBUGCALC                0091                  
 DEBUGDRAW                00c1                  
@@ -233,7 +249,7 @@ dlpnt                    0063              (R )
 DLPOINTH                 f52b              (R )
 DLPOINTL                 f543              (R )
 dlzero                   2101                  
-DMAHOLEEND0              ec7f                  
+DMAHOLEEND0              ecaf                  
 doneSPDL                 f35d              (R )
 DOUBLEBUFFER             0000 ????         (R )
 doublebufferbufferdirty  00d7                  
@@ -251,14 +267,14 @@ DRIVINGBOOST             0000 ????         (R )
 drivingposition0         01ba                  
 drivingposition1         01bb                  
 dumpbankswitch           0000 ????         (R )
-e                        00ea                  
 E                        00ea                  
+e                        00ea                  
 eeprombuffer             1fe0                  
 enterpausestate2         f11a              (R )
 exitplotsprite1          f2fa              (R )
 EXTRADLMEMORY            0000 ????         (R )
-f                        00eb                  
 F                        00eb                  
+f                        00eb                  
 FINESCROLLENABLED        0000 ????         (R )
 finescrollx              01af                  
 finescrolly              01b0                  
@@ -271,18 +287,18 @@ frameskipdo              f166              (R )
 FRAMESKIPGLITCHFIX       0000 ????         (R )
 FRAMESKIPGLITCHFIXWEAK   0000 ????         (R )
 frameslost               213e              (R )
-g                        00ec                  
 G                        00ec                  
+g                        00ec                  
 game                     e900              (R )
 game_count               00e6              (R )
 GAMEDESCRIPTION          4e616d65      str     (R ) "Test Name"
 GAMEDESCRIPTIONSET       0001              (R )
 gamedifficulty           2134                  
-gameend                  ec7f              (R )
+gameend                  ecaf              (R )
 gamelist_buffer          e800                  
 gunbuttonhandler         f1c5              (R )
-H                        00ed                  
 h                        00ed                  
+H                        00ed                  
 hiscore.asm              0000 ????         (R )
 hiscorefont              0000 ????         (R )
 HSCHARSHERE              0000 ????         (R )
@@ -316,8 +332,8 @@ HSSUPPORT                0000 ????         (R )
 hsswcha                  2139                  
 HSVoxHi                  00a3                  
 HSVoxLo                  00a4                  
-I                        00ee                  
 i                        00ee                  
+I                        00ee                  
 inactivechannelcount     00bf                  
 included.7800vox.asm     0000 ????         (R )
 included.fourbitfade.asm 0000 ????         (R )
@@ -358,14 +374,14 @@ inttemp5                 00dc              (R )
 inttemp6                 00dd              (R )
 IRQ                      f05f              (R )
 isBANKSETBANK            0000 ????         (R )
-j                        00ef                  
 J                        00ef                  
+j                        00ef                  
 joy_delay                00e8              (R )
 joybuttonhandler         f185              (R )
 joybuttonmode            01b1              (R )
 joybuttonpadhandler      f170              (R )
-K                        00f0                  
 k                        00f0                  
+K                        00f0                  
 keypadmatrix0a           01ba                  
 keypadmatrix0b           01bc                  
 keypadmatrix0c           01be                  
@@ -443,8 +459,8 @@ MULTIBUTTONPAUSE         0000 ????         (R )
 MUSICTRACKER             0000 ????         (R )
 mutetia                  f1f6                  
 mutetialoop              f1fa              (R )
-n                        00f3                  
 N                        00f3                  
+n                        00f3                  
 NMI                      f000              (R )
 NMIexit                  f079              (R )
 NODRAWWAIT               0000 ????         (R )
@@ -645,16 +661,16 @@ sINPT1                   2102              (R )
 sINPT3                   2103                  
 skipalphadata0           e977              (R )
 skipalphadata1           e9a0              (R )
-skipalphadata10          eb97              (R )
-skipalphadata11          ebbb              (R )
-skipalphadata2           eaaf              (R )
-skipalphadata3           eacc              (R )
-skipalphadata4           eae9              (R )
-skipalphadata5           eb06              (R )
-skipalphadata6           eb23              (R )
-skipalphadata7           eb40              (R )
-skipalphadata8           eb5d              (R )
-skipalphadata9           eb7a              (R )
+skipalphadata10          ebc7              (R )
+skipalphadata11          ebeb              (R )
+skipalphadata2           eadf              (R )
+skipalphadata3           eafc              (R )
+skipalphadata4           eb19              (R )
+skipalphadata5           eb36              (R )
+skipalphadata6           eb53              (R )
+skipalphadata7           eb70              (R )
+skipalphadata8           eb8d              (R )
+skipalphadata9           ebaa              (R )
 skipbrkdetected          f063                  
 skipbrkolorset           f063              (R )
 skipcanarytriggered      f027              (R )
@@ -736,8 +752,8 @@ SWBCNT                   0283
 SWCHA                    0280              (R )
 SWCHA_DIRMASK            f1c2              (R )
 SWCHB                    0282              (R )
-T                        00f9                  
 t                        00f9                  
+T                        00f9                  
 T1024T                   0297                  
 TDOUBLEBUFFEROFFSET      004d              (R )
 temp1                    0042              (R )
@@ -779,15 +795,15 @@ trakbally1               01bd
 TRAKTIME                 0000 ????         (R )
 TRAKXONLY                0000 ????         (R )
 TWOPADDLESUPPORT         0000 ????         (R )
-U                        00fa                  
 u                        00fa                  
+U                        00fa                  
 uninterruptableroutines  f14b              (R )
 unlockzonex              f35e                  
 USED_ADJUSTVISIBLE       0000 ????         (R )
 USED_PLOTVALUE           0000 ????         (R )
 USED_PLOTVALUEEXTRA      0000 ????         (R )
-v                        00fb                  
 V                        00fb                  
+v                        00fb                  
 valbufend                01ad              (R )
 valbufendsave            01ae              (R )
 VALBUFFER                2000                  
@@ -2459,8 +2475,8 @@ XCTRL2                   0478
 XCTRL3                   047c                  
 XCTRL4                   0471                  
 XCTRL5                   0472                  
-y                        00fe                  
 Y                        00fe                  
+y                        00fe                  
 z                        00ff                  
 Z                        00ff                  
 zerosfx                  f294              (R )

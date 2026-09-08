@@ -225,6 +225,12 @@ Exit criteria:
 
 1. Power-on menu displays SD-derived titles without manual edits.
 
+Status:
+
+1. Implemented on menu.bas path.
+2. Menu now issues rescan command (0x2200 = 0x81), polls metadata flags, reads entry count, and renders slot titles from 0xE820+.
+3. Empty/fail/timeout fallback strings are shown when no valid entries are available.
+
 ### Phase E: Selection-to-Launch Metadata Bridge
 
 Goal:

@@ -63,39 +63,33 @@ main_loop
  
  drawscreen
  goto main_loop
-
-draw_title
+ 
  ;
  ; Draw title and instructions
  ;
+draw_title
  plotchars 'GAME LOADER' 0 60 0
  plotchars 'SELECT A GAME' 1 56 2
  return
-
+ 
+ ;
+ ; Display titles from the metadata window populated by the A78 scan.
+ ;
 draw_game_list
- ;
- ; Display available games
- ;
- ; plotchars 'ASTRO WING'       0 10 4
- ; plotchars 'DONKEY KONG'       0 10 6
- ; plotchars 'GALAGA'           0 10 8
- ; plotchars 'MS PAC-MAN'       0 10 10
- ; plotchars 'DEFENDER'         0 10 12
- plotchars $E800 0 10 4
- plotchars $E820 0 10 5
- plotchars $E840 0 10 6
- plotchars $E860 0 10 7
- plotchars $E880 0 10 8
- plotchars $E8A0 0 10 9
- plotchars $E8C0 0 10 10
- plotchars $E8E0 0 10 11
-
+ if game_count > 0 then plotchars $E820 0 10 4
+ if game_count > 1 then plotchars $E844 0 10 5
+ if game_count > 2 then plotchars $E868 0 10 6
+ if game_count > 3 then plotchars $E88C 0 10 7
+ if game_count > 4 then plotchars $E8B0 0 10 8
+ if game_count > 5 then plotchars $E8D4 0 10 9
+ if game_count > 6 then plotchars $E8F8 0 10 10
+ if game_count > 7 then plotchars $E91C 0 10 11
  return
-
-draw_cursor
+ 
  ;
  ; Clear all cursor positions first
  ;
+draw_cursor
  plotchars ' ' 0 0 4
  plotchars ' ' 0 0 5
  plotchars ' ' 0 0 6
@@ -112,11 +106,11 @@ draw_cursor
  temp_y = selected_game * 1 + 4
  plotchars '>' 0 0 temp_y
  return
-
-check_input
+ 
  ;
  ; Simple joystick check - delay prevents rapid repeats
  ;
+check_input
  if joy0up then selected_game = selected_game - 1 : joy_delay = 15
  if joy0down then selected_game = selected_game + 1 : joy_delay = 15
  
@@ -133,11 +127,11 @@ select_game_end
  if selected_game > 7 then selected_game = 0
  if selected_game > 127 then selected_game = 7
  return
-
+ 
+ ;
+ ; Flash the screen and keep the original Astrowing handoff behavior intact.
+ ;
 select_game
- ;
- ; Visual feedback: flash background briefly
- ;
  flash_count = 8
 flash_loop
  BACKGRND=$22
@@ -147,13 +141,9 @@ flash_loop
  flash_count = flash_count - 1
  if flash_count > 0 then goto flash_loop
  
- ;
- ; Trigger FPGA: for now every slot still hands off to the fixed Astrowing image.
  ; Bit 7 marks the write as a load request.
- ;
  fpga_trigger = selected_game + 128
 
- ; Wait for load to finish (poll $7FF0)
 wait_loop
  restorescreen
  drawscreen

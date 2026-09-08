@@ -9,6 +9,7 @@
 #   ./build.sh --trace-boot FILE  - Replays an external Atari boot trace with boot assertions enabled
 #   ./build.sh --trace-menu FILE  - Replays an external Atari bus trace against the prototype menu ROM
 #   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
+#   ./build.sh --gowin-h5-sideband - Synthesizes with Hazard5 sideband top wrapper enabled
 #   ./build.sh --gowin-ip-report  - Shows whether Gowin/RTL IP modules were used in latest synthesis log
 #   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
 # ============================================================================
@@ -156,6 +157,29 @@ report_gowin_ip_usage() {
     rg -n "Compiling module 'rom_block_2k|Compiling module 'hazard5_soc|Compiling module 'gowin_sp_be32|Compiling module 'gowin_sdpb_mailbox|Gowin_pROM|Gowin_SP|Gowin_SDPB|Extracting RAM for identifier 'mem'" "$log_path" || true
 
     echo
+    echo "[2b] Elaboration summary"
+    if rg -q "Compiling module 'hazard5_soc" "$log_path"; then
+        echo "hazard5_soc: elaborated"
+    else
+        echo "hazard5_soc: not elaborated"
+    fi
+    if rg -q "Compiling module 'gowin_sp_be32" "$log_path"; then
+        echo "gowin_sp_be32: elaborated"
+    else
+        echo "gowin_sp_be32: not elaborated"
+    fi
+    if rg -q "Compiling module 'gowin_sdpb_mailbox" "$log_path"; then
+        echo "gowin_sdpb_mailbox: elaborated"
+    else
+        echo "gowin_sdpb_mailbox: not elaborated"
+    fi
+    if rg -q "Compiling module 'Gowin_SDPB" "$log_path"; then
+        echo "Gowin_SDPB: elaborated"
+    else
+        echo "Gowin_SDPB: not elaborated"
+    fi
+
+    echo
     echo "[2a] Top-level instantiation check"
     if rg -q "hazard5_soc[[:space:]]*#|hazard5_soc[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\(" "$PROJECT_DIR/rtl/atari_cart_top.v"; then
         echo "hazard5_soc appears instantiated in rtl/atari_cart_top.v"
@@ -171,6 +195,8 @@ report_gowin_ip_usage() {
 
 # Function: Run Gowin EDA Synthesis & Bitstream Generation
 run_gowin_synthesis() {
+    local top_module="${1:-atari_cart_top}"
+
     echo -e "\n${YELLOW}[Phase 5] Running Gowin EDA Synthesis & PnR...${NC}"
 
     if [ ! -d "$GOWIN_IDE" ]; then
@@ -205,6 +231,7 @@ run_gowin_synthesis() {
 # Gowin IDE Synthesis TCL Script for Atari 7800 Multi-Cart V3
 set_device GW1NR-LV9QN88PC6/I5 -name GW1NR-9C
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top.v"
+add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5.v"
 add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
@@ -229,7 +256,7 @@ add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_muldiv_seq.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_priority_encode.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/arith/hazard5_shift_barrel.v"
 add_file -type cst "$PROJECT_DIR/atari.cst"
-set_option -top_module atari_cart_top
+set_option -top_module $top_module
 set_option -verilog_std sysv2017
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1
@@ -286,7 +313,10 @@ case "$MODE" in
         run_menu_trace_replay "$TRACE_FILE"
         ;;
     --gowin)
-        run_gowin_synthesis
+        run_gowin_synthesis atari_cart_top
+        ;;
+    --gowin-h5-sideband)
+        run_gowin_synthesis atari_cart_top_h5
         ;;
     --gowin-ip-report)
         report_gowin_ip_usage
@@ -297,7 +327,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-ip-report | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-h5-sideband | --gowin-ip-report | --all]"
         exit 1
         ;;
 esac

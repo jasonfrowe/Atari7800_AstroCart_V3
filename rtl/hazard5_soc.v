@@ -7,7 +7,9 @@
 `default_nettype none
 
 module hazard5_soc #(
-    parameter FIRMWARE_HEX = "firmware.hex"
+    parameter FIRMWARE_HEX = "firmware.hex",
+    parameter CPU_EXT_C = 1,
+    parameter CPU_EXT_M = 1
 )(
     input  wire        clk,            // System clock (27 MHz)
     input  wire        rst_n,          // Active low reset
@@ -50,8 +52,8 @@ module hazard5_soc #(
 
     // Instantiate Hazard5 1-Port Processor Core
     hazard5_cpu_1port #(
-        .EXTENSION_C(1),
-        .EXTENSION_M(1),
+        .EXTENSION_C(CPU_EXT_C),
+        .EXTENSION_M(CPU_EXT_M),
         .RESET_VECTOR(32'h0000_0000)
     ) u_cpu (
         .clk             (clk),

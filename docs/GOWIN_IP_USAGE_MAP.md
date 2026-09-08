@@ -41,6 +41,16 @@ This reports:
 2. module compile/use markers,
 3. sweep warnings that indicate optimized-away blocks.
 
+Elaboration probe mode:
+
+./build.sh --gowin-h5-sideband
+
+This uses a dedicated top wrapper that forces H5 sideband on for reproducible synthesis experiments.
+
+Report interpretation:
+1. "Analyzing Verilog file" means source is present in the project.
+2. "Compiling module" means module was elaborated into active logic for that top build.
+
 ## Planned Functional Adoption
 1. gowin_sdpb:
    - Planned role: metadata mailbox RAM between Hazard5 service plane and menu-visible window.

@@ -165,7 +165,9 @@ module atari_cart_top #(
             /* verilator lint_on UNUSEDSIGNAL */
 
             hazard5_soc #(
-                .FIRMWARE_HEX(FW_INIT_FILE)
+                .FIRMWARE_HEX(FW_INIT_FILE),
+                .CPU_EXT_C(0),
+                .CPU_EXT_M(1)
             ) u_h5_soc (
                 .clk           (clk),
                 .rst_n         (core_rst_n),

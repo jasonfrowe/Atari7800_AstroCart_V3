@@ -25,15 +25,14 @@
 0.condpart7              ea74                  
 0.condpart8              ea98                  
 0.condpart9              eabc                  
-0.copy_handover_stub     ec97              (R )
+0.copy_handover_stub     ec85              (R )
 0.draw_cursor            eadb              (R )
 0.draw_game_list         e9ba              (R )
 0.draw_title             e969              (R )
 0.flash_loop             ec64              (R )
-0.handover_stub_code     eca6              (R )
+0.handover_stub_code     ec9a              (R )
 0.HSselect               0000 ????         (R )
 0.HSup                   0000 ????         (R )
-0.keep_waiting           ecac              (R )
 0.L00                    e900                  
 0.L01                    e900                  
 0.L010                   e92f                  
@@ -100,11 +99,8 @@
 0.L066                   ec72                  
 0.L067                   ec79                  
 0.L068                   ec82                  
-0.L069                   ec8a                  
+0.L069                   ecac                  
 0.L07                    e917                  
-0.L070                   ec8d                  
-0.L071                   ec90                  
-0.L072                   ecac                  
 0.L08                    e923                  
 0.L09                    e92f                  
 0.main_loop              e947              (R )
@@ -132,7 +128,7 @@
 0.skipL067               ec82              (R )
 0.topscreenroutine       0000 ????         (R )
 0.userinterrupt          0000 ????         (R )
-0.wait_loop              ec8a              (R )
+0.wait_loaded            ec9d              (R )
 _RSYNC                   0003                  
 _WSYNC                   0002                  
 a                        00e6                  
@@ -160,8 +156,8 @@ AUDV0                    0019              (R )
 AUDV1                    001a              (R )
 avoxdetected             210a                  
 AVOXVOICE                0000 ????         (R )
-B                        00e7                  
 b                        00e7                  
+B                        00e7                  
 BACKGRND                 0020              (R )
 BANK_WAS_SET             0001              (R )
 BANKRAM                  0000 ????         (R )
@@ -249,7 +245,7 @@ dlpnt                    0063              (R )
 DLPOINTH                 f52b              (R )
 DLPOINTL                 f543              (R )
 dlzero                   2101                  
-DMAHOLEEND0              ecaf                  
+DMAHOLEEND0              ecad                  
 doneSPDL                 f35d              (R )
 DOUBLEBUFFER             0000 ????         (R )
 doublebufferbufferdirty  00d7                  
@@ -287,14 +283,14 @@ frameskipdo              f166              (R )
 FRAMESKIPGLITCHFIX       0000 ????         (R )
 FRAMESKIPGLITCHFIXWEAK   0000 ????         (R )
 frameslost               213e              (R )
-G                        00ec                  
 g                        00ec                  
+G                        00ec                  
 game                     e900              (R )
 game_count               00e6              (R )
 GAMEDESCRIPTION          4e616d65      str     (R ) "Test Name"
 GAMEDESCRIPTIONSET       0001              (R )
 gamedifficulty           2134                  
-gameend                  ecaf              (R )
+gameend                  ecad              (R )
 gamelist_buffer          e800                  
 gunbuttonhandler         f1c5              (R )
 h                        00ed                  
@@ -391,8 +387,8 @@ keypadmatrix1b           01bd
 keypadmatrix1c           01bf                  
 keypadmatrix1d           01c1                  
 KEYPADSUPPORT            0000 ????         (R )
-L                        00f1                  
 l                        00f1                  
+L                        00f1                  
 LASTZONEADDRESS          1fb0                  
 leavepauseroutine        f121              (R )
 LIGHTGUNSUPPORT          0000 ????         (R )
@@ -419,8 +415,8 @@ LZSA_SRC_LO              0044
 lzsa_srcptr              0044              (R )
 lzsa_winptr              0042              (R )
 LZSAFASTCOPYBYTE         0001                  
-M                        00f2                  
 m                        00f2                  
+M                        00f2                  
 MCPDEVCART               0000 ????         (R )
 mega7800.asm             0000 ????         (R )
 mega7800data0            01ba                  
@@ -459,8 +455,8 @@ MULTIBUTTONPAUSE         0000 ????         (R )
 MUSICTRACKER             0000 ????         (R )
 mutetia                  f1f6                  
 mutetialoop              f1fa              (R )
-N                        00f3                  
 n                        00f3                  
+N                        00f3                  
 NMI                      f000              (R )
 NMIexit                  f079              (R )
 NODRAWWAIT               0000 ????         (R )
@@ -470,8 +466,8 @@ NOTIALOCK                0000 ????         (R )
 ntsc2palskipcheck        f162              (R )
 ntscslowframe            01b6              (R )
 NVLINES                  0019                  
-o                        00f4                  
 O                        00f4                  
+o                        00f4                  
 OFFSET                   0038              (R )
 overscanDLLstart         213d              (R )
 p                        00f5                  
@@ -743,8 +739,8 @@ SPACEOVERFLOWPASS        0000              (R )
 speech_addr              009f                  
 speech_addr_hi           00a0                  
 sSWCHA                   2131              (R )
-start                    f4ad                  
 START                    f4ad              (R )
+start                    f4ad                  
 START_OF_ROM             0000                  
 status_temp              00eb                  
 SWACNT                   0281                  
@@ -752,8 +748,8 @@ SWBCNT                   0283
 SWCHA                    0280              (R )
 SWCHA_DIRMASK            f1c2              (R )
 SWCHB                    0282              (R )
-t                        00f9                  
 T                        00f9                  
+t                        00f9                  
 T1024T                   0297                  
 TDOUBLEBUFFEROFFSET      004d              (R )
 temp1                    0042              (R )
@@ -2475,8 +2471,8 @@ XCTRL2                   0478
 XCTRL3                   047c                  
 XCTRL4                   0471                  
 XCTRL5                   0472                  
-Y                        00fe                  
 y                        00fe                  
+Y                        00fe                  
 z                        00ff                  
 Z                        00ff                  
 zerosfx                  f294              (R )

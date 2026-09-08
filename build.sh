@@ -299,9 +299,7 @@ run_gowin_synthesis() {
     # Ensure memory hex files exist
     make -C sim rom_chunk_00.hex
     make -C firmware
-    if [ "$use_femtorv_fw" -eq 1 ]; then
-        make -C firmware femtorv
-    fi
+    make -C firmware femtorv
 
     # Keep matrix wrapper available for all synthesis modes.
     emit_h5_matrix_wrapper "$h5_fw_ram_en" "$h5_mailbox_en" "$h5_spi_en"
@@ -310,31 +308,31 @@ run_gowin_synthesis() {
     mkdir -p impl/gwsynthesis "$GOWIN_IDE/impl/gwsynthesis" "$GOWIN_IDE/impl/pnr"
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/"
+    cp sim/menu_4k.hex "$PROJECT_DIR/"
+    cp firmware/femtorv_chunk_*.hex "$PROJECT_DIR/"
     cp firmware/firmware.hex "$PROJECT_DIR/firmware.hex"
-    if [ "$use_femtorv_fw" -eq 1 ]; then
-        cp firmware/femtorv_firmware.hex "$PROJECT_DIR/femtorv_firmware.hex"
-    fi
+    cp firmware/femtorv_firmware.hex "$PROJECT_DIR/femtorv_firmware.hex"
 
     cp sim/rom_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp sim/menu_4k.hex "$PROJECT_DIR/impl/gwsynthesis/"
+    cp firmware/femtorv_chunk_*.hex "$PROJECT_DIR/impl/gwsynthesis/"
     cp firmware/firmware.hex "$PROJECT_DIR/impl/gwsynthesis/firmware.hex"
-    if [ "$use_femtorv_fw" -eq 1 ]; then
-        cp firmware/femtorv_firmware.hex "$PROJECT_DIR/impl/gwsynthesis/femtorv_firmware.hex"
-    fi
+    cp firmware/femtorv_firmware.hex "$PROJECT_DIR/impl/gwsynthesis/femtorv_firmware.hex"
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/"
+    cp sim/menu_4k.hex "$GOWIN_IDE/"
+    cp firmware/femtorv_chunk_*.hex "$GOWIN_IDE/"
     cp firmware/firmware.hex "$GOWIN_IDE/firmware.hex"
-    if [ "$use_femtorv_fw" -eq 1 ]; then
-        cp firmware/femtorv_firmware.hex "$GOWIN_IDE/femtorv_firmware.hex"
-    fi
+    cp firmware/femtorv_firmware.hex "$GOWIN_IDE/femtorv_firmware.hex"
 
     cp sim/rom_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp sim/menu_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp sim/menu_4k.hex "$GOWIN_IDE/impl/gwsynthesis/"
+    cp firmware/femtorv_chunk_*.hex "$GOWIN_IDE/impl/gwsynthesis/"
     cp firmware/firmware.hex "$GOWIN_IDE/impl/gwsynthesis/firmware.hex"
-    if [ "$use_femtorv_fw" -eq 1 ]; then
-        cp firmware/femtorv_firmware.hex "$GOWIN_IDE/impl/gwsynthesis/femtorv_firmware.hex"
-    fi
+    cp firmware/femtorv_firmware.hex "$GOWIN_IDE/impl/gwsynthesis/femtorv_firmware.hex"
 
     BUILD_TCL="$PROJECT_DIR/build.tcl"
     cat > "$BUILD_TCL" << EOF
@@ -346,7 +344,11 @@ add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5_matrix.v"
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_femtorv_test_top.v"
 add_file -type verilog "$PROJECT_DIR/rtl/femtorv_service_soc.v"
 add_file -type verilog "$PROJECT_DIR/third_party/femtorv/femtorv32_quark.v"
+add_file -type verilog "$PROJECT_DIR/rtl/ram_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
+add_file -type verilog "$PROJECT_DIR/rtl/rom_block_4k.v"
+add_file -type verilog "$PROJECT_DIR/rtl/gowin_pll.v"
+add_file -type verilog "$PROJECT_DIR/rtl/psram_controller.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
 add_file -type verilog "$PROJECT_DIR/rtl/spi_sd.v"

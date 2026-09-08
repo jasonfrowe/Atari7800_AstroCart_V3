@@ -1,14 +1,14 @@
 // ============================================================================
 // Module: atari_cart_top
-// Description: Atari 7800 Multi-Cart Top Level HDL with Full Write Passthrough
+// Description: Atari 7800 Multi-Cart Top Level HDL with SD Card Loading
 // Target: Sipeed Tang Nano 9K (Gowin GW1NR-9)
 // ============================================================================
 
 `default_nettype none
 
 module atari_cart_top #(
-    parameter FW_INIT_FILE = "firmware.hex",
-    parameter H5_SIDEBAND_EN = 1'b0,
+    parameter FW_INIT_FILE = "femtorv_firmware.hex",
+    parameter H5_SIDEBAND_EN = 1'b1,
     parameter H5_FW_RAM_EN = 1'b1,
     parameter H5_MAILBOX_EN = 1'b1,
     parameter H5_SPI_EN = 1'b1
@@ -39,9 +39,19 @@ module atari_cart_top #(
     input  wire        sd_miso,      // Pin 39
     output wire        sd_clk,       // Pin 36
 
+    // PSRAM interface pins (hardwired to internal MCP die)
+    output wire [0:0]  O_psram_ck,
+    output wire [0:0]  O_psram_ck_n,
+    output wire [0:0]  O_psram_cs_n,
+    output wire [0:0]  O_psram_reset_n,
+    inout  wire [0:0]  IO_psram_rwds,
+    inout  wire [7:0]  IO_psram_dq,
+
     // Debug LEDs
     output wire [5:0]  led
 );
+
+    assign O_psram_reset_n = 1'b1;
 
     // ------------------------------------------------------------------------
     // Internal Power-On Reset (POR) Generator
@@ -117,15 +127,8 @@ module atari_cart_top #(
     end
 
     // ------------------------------------------------------------------------
-    // Menu-first dual-image mode
+    // Menu-first dual-image mode & Handover
     // ------------------------------------------------------------------------
-    localparam [15:0] GAME_BYTES = 16'd49152; // 48KB Astrowing payload
-    localparam [15:0] MENU_BYTES = 16'd8192;  // 8KB menu payload
-
-    wire       pokey_enable;
-    wire [1:0] pokey_addr_sel = 2'b01; // $0450 per Astrowing A78 header
-    wire [3:0] mapper_type    = 4'h0;  // Flat linear mapping
-
     reg        game_mode;
     reg        switch_pending;
     reg [15:0] switch_delay;
@@ -139,17 +142,25 @@ module atari_cart_top #(
 
     wire is_trigger_write = phi2_high && !rw_is_read && (a_sync == 16'h2200);
 
-    assign pokey_enable = game_mode;
-
     // ------------------------------------------------------------------------
-    // Sideband service plane routing.
-    // Enable H5_SIDEBAND_EN=1 to source status + metadata window from FemtoRV.
+    // Sideband Service Plane Routing (FemtoRV32 + PSRAM + MicroSD)
     // ------------------------------------------------------------------------
     wire       sideband_sd_cs;
     wire       sideband_sd_mosi;
     wire       sideband_sd_clk;
     wire [7:0] sideband_status_val;
     wire [7:0] sideband_meta_rdata;
+    wire [7:0] sideband_config_val;
+    wire [15:0] loader_cart_ram_addr;
+    wire [7:0]  loader_cart_ram_wdata;
+    wire        loader_cart_ram_we;
+    wire [12:0] boot_raddr;
+    wire [7:0]  boot_rdata;
+    wire        boot_busy;
+    wire        svc_clk;
+
+    // Exported status signal for simulation testbench
+    wire [7:0] soc_status_val /* verilator public */ = sideband_status_val;
 
     generate
         if (H5_SIDEBAND_EN) begin : gen_h5_sideband
@@ -158,37 +169,76 @@ module atari_cart_top #(
             wire       svc_sd_clk;
             wire [7:0] svc_status_val;
             wire [7:0] svc_meta_rdata;
+            wire [7:0] svc_config_val;
+            wire [15:0] svc_ram_addr;
+            wire [7:0]  svc_ram_wdata;
+            wire        svc_ram_we;
+            wire [12:0] svc_boot_raddr;
+            wire        svc_boot_busy;
+            wire        svc_clk_out;
 
             femtorv_service_soc #(
                 .FIRMWARE_HEX(FW_INIT_FILE)
             ) u_service (
-                .clk        (clk),
-                .rst_n      (core_rst_n),
-                .trigger_val(trigger_val_sideband),
-                .status_val (svc_status_val),
-                .debug0     (),
-                .debug1     (),
-                .debug2     (),
-                .cart_addr  (a_sync),
-                .cart_rdata (svc_meta_rdata),
-                .cpu_probe  (),
-                .sd_cs      (svc_sd_cs),
-                .sd_mosi    (svc_sd_mosi),
-                .sd_miso    (sd_miso),
-                .sd_clk     (svc_sd_clk)
+                .clk           (clk),
+                .rst_n         (core_rst_n),
+                .trigger_val   (trigger_val_sideband),
+                .status_val    (svc_status_val),
+                .debug0        (),
+                .debug1        (),
+                .debug2        (),
+                .config_val    (svc_config_val),
+                .cart_addr     (a_sync),
+                .cart_rdata    (svc_meta_rdata),
+                .cpu_probe     (),
+                .sd_cs         (svc_sd_cs),
+                .sd_mosi       (svc_sd_mosi),
+                .sd_miso       (sd_miso),
+                .sd_clk        (svc_sd_clk),
+                .cart_ram_we   (svc_ram_we),
+                .cart_ram_addr (svc_ram_addr),
+                .cart_ram_wdata(svc_ram_wdata),
+                .boot_raddr    (svc_boot_raddr),
+                .boot_rdata    (boot_rdata),
+                .boot_busy     (svc_boot_busy),
+                .O_psram_ck    (O_psram_ck),
+                .O_psram_ck_n  (O_psram_ck_n),
+                .O_psram_cs_n  (O_psram_cs_n),
+                .IO_psram_rwds (IO_psram_rwds),
+                .IO_psram_dq   (IO_psram_dq),
+                .clk_81m_out   (svc_clk_out)
             );
 
-            assign sideband_sd_cs      = svc_sd_cs;
-            assign sideband_sd_mosi    = svc_sd_mosi;
-            assign sideband_sd_clk     = svc_sd_clk;
-            assign sideband_status_val = svc_status_val;
-            assign sideband_meta_rdata = svc_meta_rdata;
+            assign sideband_sd_cs        = svc_sd_cs;
+            assign sideband_sd_mosi      = svc_sd_mosi;
+            assign sideband_sd_clk       = svc_sd_clk;
+            assign sideband_status_val   = svc_status_val;
+            assign sideband_meta_rdata   = svc_meta_rdata;
+            assign sideband_config_val   = svc_config_val;
+            assign loader_cart_ram_addr  = svc_ram_addr;
+            assign loader_cart_ram_wdata = svc_ram_wdata;
+            assign loader_cart_ram_we    = svc_ram_we;
+            assign boot_raddr            = svc_boot_raddr;
+            assign boot_busy             = svc_boot_busy;
+            assign svc_clk               = svc_clk_out;
         end else begin : gen_no_h5_sideband
-            assign sideband_sd_cs      = 1'b1;
-            assign sideband_sd_mosi    = 1'b0;
-            assign sideband_sd_clk     = 1'b0;
-            assign sideband_status_val = game_ready ? 8'h80 : 8'h00;
-            assign sideband_meta_rdata = 8'hFF;
+            assign sideband_sd_cs        = 1'b1;
+            assign sideband_sd_mosi      = 1'b0;
+            assign sideband_sd_clk       = 1'b0;
+            assign sideband_status_val   = game_ready ? 8'h80 : 8'h00;
+            assign sideband_meta_rdata   = 8'hFF;
+            assign sideband_config_val   = 8'h03; // Default $0450 POKEY
+            assign loader_cart_ram_addr  = 16'h0000;
+            assign loader_cart_ram_wdata = 8'h00;
+            assign loader_cart_ram_we    = 1'b0;
+            assign boot_raddr            = 13'd0;
+            assign boot_busy             = 1'b0;
+            assign svc_clk               = clk;
+            assign O_psram_ck            = 1'b0;
+            assign O_psram_ck_n          = 1'b0;
+            assign O_psram_cs_n          = 1'b1;
+            assign IO_psram_rwds         = 1'bz;
+            assign IO_psram_dq           = 8'hzz;
         end
     endgenerate
 
@@ -196,20 +246,42 @@ module atari_cart_top #(
     assign sd_mosi = sideband_sd_mosi;
     assign sd_clk  = sideband_sd_clk;
 
+    // Dynamic POKEY and Mapper configuration (from A78 header via FemtoRV)
+    reg        pokey_cfg_enable;
+    reg  [1:0] pokey_cfg_addr_sel;
+    reg  [3:0] mapper_cfg_type;
+
+    always @(posedge clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            pokey_cfg_enable   <= 1'b1;
+            pokey_cfg_addr_sel <= 2'b01; // default $0450
+            mapper_cfg_type    <= 4'h0;  // default linear
+        end else if (H5_SIDEBAND_EN) begin
+            pokey_cfg_enable   <= sideband_config_val[0];
+            pokey_cfg_addr_sel <= sideband_config_val[2:1];
+            mapper_cfg_type    <= sideband_config_val[6:3];
+        end
+    end
+
+    wire pokey_enable = game_mode && pokey_cfg_enable;
+    wire [1:0] pokey_addr_sel = pokey_cfg_addr_sel;
+    wire [3:0] mapper_type = game_mode ? mapper_cfg_type : 4'h0;
+
     // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
     // ------------------------------------------------------------------------
-    wire is_cart_addr  = (a_sync >= 16'h4000);
+    wire is_cart_addr   = (a_sync >= 16'h4000);
     wire is_status_addr = (a_sync == 16'h7FF0);
-    wire is_meta_addr = (a_sync >= 16'hE800) && (a_sync <= 16'hE9FF);
-    wire is_menu_addr = (a_sync >= 16'hE000);
-    wire is_pokey_4000 = (a_sync[15:4] == 12'h400); // $4000-$400F
-    wire is_pokey_0450 = (a_sync[15:4] == 12'h045); // $0450-$045F
-    wire is_pokey_0800 = (a_sync[15:4] == 12'h080); // $0800-$080F
+    wire is_menu_addr   = (a_sync >= 16'hE000);
+    wire is_pokey_4000  = (a_sync[15:4] == 12'h400); // $4000-$400F
+    wire is_pokey_0450  = (a_sync[15:4] == 12'h045); // $0450-$045F
+    wire is_pokey_0800  = (a_sync[15:4] == 12'h080); // $0800-$080F
+    wire is_pokey_0440  = (a_sync[15:4] == 12'h044); // $0440-$044F
 
     wire is_pokey_addr = (pokey_addr_sel == 2'b00) ? is_pokey_4000 :
                          (pokey_addr_sel == 2'b01) ? is_pokey_0450 :
                          (pokey_addr_sel == 2'b10) ? is_pokey_0800 :
+                         (pokey_addr_sel == 2'b11) ? is_pokey_0440 :
                                                      1'b0;
 
     // SuperGame Bankswitch Mapper Module
@@ -229,45 +301,70 @@ module atari_cart_top #(
     );
 
     // ------------------------------------------------------------------------
-    // Cartridge ROM Memory
+    // Cartridge Game RAM (48KB across 24 BSRAM blocks)
     // ------------------------------------------------------------------------
+    wire [15:0] game_ram_raddr = boot_busy ? {3'b000, boot_raddr} : phys_rom_addr[15:0];
+    wire [4:0]  game_chunk_rsel = game_ram_raddr[15:11];
+    wire [10:0] game_chunk_roff = game_ram_raddr[10:0];
+
+    wire [15:0] eff_loader_cart_ram_addr = (loader_cart_ram_addr >= 16'hE000) ?
+                                           (loader_cart_ram_addr - 16'h4000) :
+                                           loader_cart_ram_addr;
+    wire [4:0]  loader_chunk_wsel = eff_loader_cart_ram_addr[15:11];
+    wire [10:0] loader_chunk_woff = eff_loader_cart_ram_addr[10:0];
+
     wire [7:0] chunk_rdata [0:23];
-    wire [7:0] menu_chunk_rdata [0:3];
 
-    rom_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_04.hex")) u_rom_04 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[4]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_05.hex")) u_rom_05 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[5]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_06.hex")) u_rom_06 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[6]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_07.hex")) u_rom_07 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[7]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_08.hex")) u_rom_08 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[8]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_09.hex")) u_rom_09 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[9]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_10.hex")) u_rom_10 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[10]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_11.hex")) u_rom_11 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[11]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_12.hex")) u_rom_12 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[12]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_13.hex")) u_rom_13 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[13]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_14.hex")) u_rom_14 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[14]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_15.hex")) u_rom_15 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[15]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_16.hex")) u_rom_16 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[16]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_17.hex")) u_rom_17 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[17]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_18.hex")) u_rom_18 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[18]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_19.hex")) u_rom_19 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[19]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_20.hex")) u_rom_20 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[20]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_21.hex")) u_rom_21 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[21]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]));
-    rom_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]));
+    // Blocks 0..3: Initialized with FemtoRV firmware image for power-on bootloader copy to PSRAM
+    ram_block_2k #(.INIT_FILE("femtorv_chunk_00.hex")) u_game_ram_00 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[0]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd0)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("femtorv_chunk_01.hex")) u_game_ram_01 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[1]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd1)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("femtorv_chunk_02.hex")) u_game_ram_02 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[2]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd2)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("femtorv_chunk_03.hex")) u_game_ram_03 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[3]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd3)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
 
-    rom_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_menu_rom_00 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[0]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_menu_rom_01 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[1]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_menu_rom_02 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[2]));
-    rom_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_menu_rom_03 (.clk(clk), .raddr(a_sync[10:0]), .rdata(menu_chunk_rdata[3]));
-    wire [4:0] rom_chunk_sel = phys_rom_addr[15:11];
-    wire [7:0] rom_data_out = (rom_chunk_sel < 5'd24) ? chunk_rdata[rom_chunk_sel] : 8'hFF;
+    // Blocks 4..19: Initialized empty
+    genvar gi;
+    generate
+        for (gi = 4; gi < 20; gi = gi + 1) begin : gen_game_ram
+            ram_block_2k #(.INIT_FILE("")) u_game_ram (
+                .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[gi]),
+                .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == gi[4:0])), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+            );
+        end
+    endgenerate
 
-    wire [1:0] menu_chunk_sel = a_sync[12:11];
-    wire [7:0] menu_data_out = menu_chunk_rdata[menu_chunk_sel];
+    // Blocks 20..23: Initialized with 8KB Menu ROM ($E000-$FFFF)
+    ram_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_game_ram_20 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[20]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd20)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_game_ram_21 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[21]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd21)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_game_ram_22 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[22]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd22)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+    ram_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_game_ram_23 (
+        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[23]),
+        .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd23)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
+    );
+
+    assign boot_rdata = (game_chunk_rsel < 5'd4) ? chunk_rdata[game_chunk_rsel] : 8'h00;
+    wire [7:0] rom_data_out = (game_chunk_rsel < 5'd24) ? chunk_rdata[game_chunk_rsel] : 8'hFF;
+
 
     // ------------------------------------------------------------------------
     // POKEY Sound Synthesizer Core Integration
@@ -298,40 +395,34 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Dynamic Data Bus Output Selection & Level Shifter Controls (U3 SN74LVC245)
     // ------------------------------------------------------------------------
-    // The cart responds in normal cartridge space plus the selected POKEY window.
     wire is_fpga_response_addr = is_cart_addr || (pokey_enable && is_pokey_addr);
+    wire is_bus_read           = is_fpga_response_addr && rw_is_read;
 
-    // Decode read/write intent from synchronized Atari control signals.
-    wire is_bus_read  = is_fpga_response_addr && rw_is_read;
-
-    // U3 Buffer Direction (U3_DIR): 1 = FPGA->Atari (Read), 0 = Atari->FPGA (Write/Idle)
     assign buf_dir = is_bus_read;
-
-    // Keep transceiver enabled continuously; direction + FPGA tri-state controls who drives.
     assign buf_oe  = 1'b0;
 
-    // FPGA Internal Data Bus Drive Logic
     wire drive_pokey = pokey_enable && is_pokey_addr && rw_is_read;
-    wire [7:0] status_data_out = sideband_status_val;
-    wire [7:0] menu_meta_data_out = (H5_SIDEBAND_EN && is_meta_addr) ? sideband_meta_rdata : menu_data_out;
+    wire [7:0] status_data_out = game_ready ? 8'h80 : sideband_status_val;
     wire [7:0] menu_bus_data_out = is_status_addr ? status_data_out :
-                                   (is_menu_addr ? menu_meta_data_out : 8'hFF);
+                                   (is_menu_addr ? rom_data_out : 8'hFF);
     wire [7:0] bus_data_out = game_mode ? (drive_pokey ? pokey_dout : rom_data_out)
                                         : menu_bus_data_out;
 
-    // Drive when this cart owns a read cycle.
     assign d   = (is_bus_read && (buf_dir == 1'b1)) ? bus_data_out : 8'hZZ;
-    assign irq = 1'b0; // Drive 0V to Q3 Gate (Transistor OFF -> HALT floats HIGH via 5V motherboard pull-up)
+    assign irq = 1'b0;
 
+    // ------------------------------------------------------------------------
+    // Handover & Mode Switch State Machine
+    // ------------------------------------------------------------------------
     always @(posedge clk or negedge core_rst_n) begin
         if (!core_rst_n) begin
-            game_mode      <= 1'b0;
-            switch_pending <= 1'b0;
-            switch_delay   <= 16'd0;
-            game_ready     <= 1'b0;
-            post_ack_pending <= 1'b0;
-            post_ack_delay <= 16'd0;
-            trig_wr_prev   <= 1'b0;
+            game_mode            <= 1'b0;
+            switch_pending       <= 1'b0;
+            switch_delay         <= 16'd0;
+            game_ready           <= 1'b0;
+            post_ack_pending     <= 1'b0;
+            post_ack_delay       <= 16'd0;
+            trig_wr_prev         <= 1'b0;
             trigger_val_sideband <= 8'h00;
         end else begin
             trig_wr_prev <= is_trigger_write;
@@ -350,48 +441,38 @@ module atari_cart_top #(
             end
 
             if (switch_pending && !game_ready) begin
-                if (switch_delay == 16'd4095)
+                if (H5_SIDEBAND_EN ? (sideband_status_val == 8'h80) : (switch_delay == 16'd4095))
                     game_ready <= 1'b1;
-                else
+                else if (switch_delay != 16'hFFFF)
                     switch_delay <= switch_delay + 1'b1;
             end
 
             if (is_trigger_write && !trig_wr_prev) begin
-                if ((d_in_sync == 8'hA5) && switch_pending && game_ready) begin
+                if (d_in_sync == 8'hA5) begin
                     game_mode        <= 1'b1;
                     switch_pending   <= 1'b0;
-                    switch_delay     <= 16'd0;
                     game_ready       <= 1'b0;
                     post_ack_pending <= 1'b0;
                     post_ack_delay   <= 16'd0;
-                end else if (d_in_sync == 8'h40) begin
-                    game_mode      <= 1'b0;
-                    switch_pending <= 1'b0;
-                    switch_delay   <= 16'd0;
-                    game_ready     <= 1'b0;
-                    post_ack_pending <= 1'b0;
-                    post_ack_delay <= 16'd0;
                 end else if (d_in_sync[7]) begin
                     switch_pending <= 1'b1;
                     switch_delay   <= 16'd0;
                     game_ready     <= 1'b0;
-                    post_ack_pending <= 1'b0;
-                    post_ack_delay <= 16'd0;
                 end
             end
         end
     end
 
     // ------------------------------------------------------------------------
-    // Diagnostic LEDs
+    // Status LEDs
     // ------------------------------------------------------------------------
-    reg [23:0] activity_cnt;
-    always @(posedge clk) begin
-        if (phi2_rise && is_cart_addr)
-            activity_cnt <= activity_cnt + 1'b1;
-    end
-
-    assign led = ~{activity_cnt[23:19], is_bus_read};
+    assign led[0] = ~sideband_status_val[7];
+    assign led[1] = ~trigger_val_sideband[7];
+    assign led[2] = ~trigger_val_sideband[0];
+    assign led[3] = ~game_mode;
+    assign led[4] = ~boot_busy;
+    assign led[5] = ~(halt ^ phi2_high ^ rw_is_read);
 
 endmodule
+
 `default_nettype wire

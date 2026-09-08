@@ -14,25 +14,12 @@
 #define CART_CSR_DEBUG0   REG8(0xC000000Cu)
 #define CART_CSR_DEBUG1   REG8(0xC0000010u)
 #define CART_CSR_DEBUG2   REG8(0xC0000014u)
+#define CART_CSR_CONFIG   REG8(0xC0000018u)
 
-#define META_BASE         0xE0000000u
-
-#define META_HDR_SIG0     0x00u
-#define META_HDR_SIG1     0x01u
-#define META_HDR_VER      0x02u
-#define META_HDR_FLAGS    0x03u
-#define META_HDR_COUNT    0x04u
-#define META_HDR_VALID    0x05u
-#define META_HDR_ERROR    0x06u
-
-#define META_SLOT_BASE    0x20u
-#define META_SLOT_STRIDE  36u
-#define META_SLOT_COUNT   8u
-
-#define META_FLAG_BUSY    0x01u
-#define META_FLAG_DONE    0x02u
-#define META_FLAG_ERROR   0x04u
-#define META_FLAG_OVER    0x08u
+#define CART_RAM_BASE       0xD0000000u
+#define MENU_TITLES_OFFSET  0xA800u  // 48K Cart RAM offset for 6502 address $E800
+#define MENU_SLOT_STRIDE    32u
+#define MENU_SLOT_COUNT     8u
 
 #define A78_HEADER_SIZE 128u
 #define A78_OFF_VERSION 0u
@@ -91,23 +78,14 @@ static void decode_legacy_profile(uint16_t cart_type, a78_profile_t *out);
 static void decode_v4_profile(uint8_t mapper_raw, uint8_t audio_raw, a78_profile_t *out);
 
 static FATFS g_fs;
+static char g_slot_paths[MENU_SLOT_COUNT][32];
 
 void loader_set_stage(BYTE stage) {
     CART_CSR_STATUS = stage;
 }
 
-static void meta_write(uint16_t off, uint8_t value) {
-    REG8(META_BASE + (uint32_t)off) = value;
-}
-
-static void meta_set_header(uint8_t flags, uint8_t count, uint8_t valid, uint8_t error) {
-    meta_write(META_HDR_SIG0, 'M');
-    meta_write(META_HDR_SIG1, 'D');
-    meta_write(META_HDR_VER, 0x01u);
-    meta_write(META_HDR_FLAGS, flags);
-    meta_write(META_HDR_COUNT, count);
-    meta_write(META_HDR_VALID, valid);
-    meta_write(META_HDR_ERROR, error);
+static void cart_write(uint16_t off, uint8_t value) {
+    REG8(CART_RAM_BASE + (uint32_t)off) = value;
 }
 
 static uint8_t sanitize_char(uint8_t c) {
@@ -117,15 +95,8 @@ static uint8_t sanitize_char(uint8_t c) {
     return c;
 }
 
-static void meta_clear_slots(void) {
-    uint16_t i;
-    for (i = 0u; i < (uint16_t)META_SLOT_COUNT * (uint16_t)META_SLOT_STRIDE; ++i) {
-        meta_write((uint16_t)(META_SLOT_BASE + i), 0u);
-    }
-}
-
-static void meta_write_slot_title(uint8_t slot, const char *text) {
-    uint16_t base = (uint16_t)(META_SLOT_BASE + (uint16_t)slot * (uint16_t)META_SLOT_STRIDE);
+static void cart_write_slot_title(uint8_t slot, const char *text) {
+    uint16_t base = (uint16_t)(MENU_TITLES_OFFSET + (uint16_t)slot * (uint16_t)MENU_SLOT_STRIDE);
     uint8_t i;
 
     for (i = 0u; i < 32u; ++i) {
@@ -133,16 +104,16 @@ static void meta_write_slot_title(uint8_t slot, const char *text) {
         if (c == 0u) {
             break;
         }
-        meta_write((uint16_t)(base + i), sanitize_char(c));
+        cart_write((uint16_t)(base + i), sanitize_char(c));
     }
 
     for (; i < 32u; ++i) {
-        meta_write((uint16_t)(base + i), 0u);
+        cart_write((uint16_t)(base + i), 0u);
     }
 }
 
-static void meta_write_slot_from_header(uint8_t slot, const uint8_t *hdr, uint8_t hdr_off, const char *fallback_name, a78_profile_t *out_profile) {
-    uint16_t base = (uint16_t)(META_SLOT_BASE + (uint16_t)slot * (uint16_t)META_SLOT_STRIDE);
+static void cart_write_slot_from_header(uint8_t slot, const uint8_t *hdr, uint8_t hdr_off, const char *fallback_name, a78_profile_t *out_profile) {
+    uint16_t base = (uint16_t)(MENU_TITLES_OFFSET + (uint16_t)slot * (uint16_t)MENU_SLOT_STRIDE);
     uint8_t version = hdr[hdr_off + A78_OFF_VERSION];
     uint16_t cart_type = read_be_u16(&hdr[hdr_off + A78_OFF_CART_TYPE]);
     uint8_t mapper_raw = hdr[hdr_off + A78_OFF_V4_MAPPER];
@@ -165,21 +136,16 @@ static void meta_write_slot_from_header(uint8_t slot, const uint8_t *hdr, uint8_
         if (c != ' ') {
             has_title = 1u;
         }
-        meta_write((uint16_t)(base + i), c);
+        cart_write((uint16_t)(base + i), c);
     }
     for (; i < 32u; ++i) {
-        meta_write((uint16_t)(base + i), 0u);
+        cart_write((uint16_t)(base + i), 0u);
     }
 
     if (!has_title) {
-        meta_write_slot_title(slot, fallback_name);
+        cart_write_slot_title(slot, fallback_name);
         out_profile->slot_flags = (uint8_t)(out_profile->slot_flags | SLOT_FLAG_TITLE_FALLBACK);
     }
-
-    meta_write((uint16_t)(base + 32u), out_profile->mapper_class);
-    meta_write((uint16_t)(base + 33u), out_profile->pokey_mode);
-    meta_write((uint16_t)(base + 34u), out_profile->slot_flags);
-    meta_write((uint16_t)(base + 35u), 0u);
 }
 
 static uint8_t ascii_upper(uint8_t c) {
@@ -354,11 +320,10 @@ static uint8_t build_path(uint8_t use_roms_subdir, const char *name, char *out_p
     return (o > 0u) ? 1u : 0u;
 }
 
-static uint8_t scan_and_populate(uint8_t use_roms_subdir, uint8_t *valid_bitmap, uint8_t *entry_count, uint8_t *last_error) {
+static uint8_t scan_and_populate(uint8_t *valid_bitmap, uint8_t *entry_count, uint8_t *last_error) {
     DIR dj;
     FILINFO fi;
     FRESULT fr;
-    const char *dir_path = use_roms_subdir ? "ROMS" : "";
     uint8_t slot = 0u;
     uint8_t overflow = 0u;
     uint8_t hdr[A78_HEADER_SIZE];
@@ -367,92 +332,97 @@ static uint8_t scan_and_populate(uint8_t use_roms_subdir, uint8_t *valid_bitmap,
     a78_profile_t profile;
     UINT br;
     char path[32];
+    uint8_t pass;
 
-    loader_set_stage(0x16u);
-    fr = pf_opendir(&dj, dir_path);
-    if (fr != FR_OK) {
-        *last_error = use_roms_subdir ? 0xD8u : 0xEAu;
-        return 0u;
-    }
+    for (pass = 0; pass < 2 && slot == 0; ++pass) {
+        uint8_t use_roms_subdir = (pass == 0) ? 1u : 0u;
+        const char *dir_path = use_roms_subdir ? "ROMS" : "";
 
-    loader_set_stage(0x17u);
-    while (1) {
-        fr = pf_readdir(&dj, &fi);
+        loader_set_stage(0x16u);
+        fr = pf_opendir(&dj, dir_path);
         if (fr != FR_OK) {
-            *last_error = 0xEAu;
-            break;
-        }
-        if (fi.fname[0] == 0) {
-            break;
-        }
-        if ((fi.fattrib & AM_DIR) != 0u) {
-            continue;
-        }
-        if (!has_a78_extension(fi.fname)) {
+            *last_error = 0x6Au;
             continue;
         }
 
-        if (slot >= META_SLOT_COUNT) {
-            overflow = 1u;
-            continue;
-        }
+        loader_set_stage(0x17u);
+        while (1) {
+            fr = pf_readdir(&dj, &fi);
+            if (fr != FR_OK || fi.fname[0] == 0) {
+                break;
+            }
+            if ((fi.fattrib & AM_DIR) != 0u) {
+                continue;
+            }
+            if (!has_a78_extension(fi.fname)) {
+                continue;
+            }
 
-        if (!build_path(use_roms_subdir, fi.fname, path, sizeof(path))) {
-            *last_error = 0xEAu;
-            continue;
-        }
+            if (slot >= MENU_SLOT_COUNT) {
+                overflow = 1u;
+                continue;
+            }
 
-        loader_set_stage(0x19u);
-        fr = pf_open(path);
-        if (fr != FR_OK) {
-            *last_error = 0xEAu;
-            continue;
-        }
+            if (!build_path(use_roms_subdir, fi.fname, path, sizeof(path))) {
+                *last_error = 0x6Au;
+                continue;
+            }
 
-        loader_set_stage(0x1Au);
-        br = 0u;
-        fr = pf_read(hdr, A78_HEADER_SIZE, &br);
-        if (fr != FR_OK || br < A78_HEADER_SIZE) {
-            *last_error = 0xE9u;
-            continue;
-        }
+            loader_set_stage(0x19u);
+            fr = pf_open(path);
+            if (fr != FR_OK) {
+                *last_error = 0x6Au;
+                continue;
+            }
 
-        loader_set_stage(0x1Bu);
-        hdr_off = find_a78_header_offset(hdr);
-        if (hdr_off == 0xFFu) {
-            *last_error = 0xD6u;
-            continue;
-        }
+            loader_set_stage(0x1Au);
+            br = 0u;
+            fr = pf_read(hdr, A78_HEADER_SIZE, &br);
+            if (fr != FR_OK || br < A78_HEADER_SIZE) {
+                *last_error = 0x69u;
+                continue;
+            }
 
-        version = hdr[hdr_off + A78_OFF_VERSION];
-        if (version > 4u) {
-            *last_error = 0xD5u;
-            continue;
-        }
+            loader_set_stage(0x1Bu);
+            hdr_off = find_a78_header_offset(hdr);
+            if (hdr_off == 0xFFu) {
+                *last_error = 0x56u;
+                continue;
+            }
 
-        if (read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]) == 0u) {
-            *last_error = 0xD7u;
-            continue;
-        }
+            version = hdr[hdr_off + A78_OFF_VERSION];
+            if (version > 4u) {
+                *last_error = 0x55u;
+                continue;
+            }
 
-        meta_write_slot_from_header(slot, hdr, hdr_off, fi.fname, &profile);
-        *valid_bitmap = (uint8_t)(*valid_bitmap | (1u << slot));
-        slot++;
-        *entry_count = slot;
+            if (read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]) == 0u) {
+                *last_error = 0x57u;
+                continue;
+            }
 
-        if (slot == 1u) {
-            CART_CSR_DEBUG0 = version;
-            CART_CSR_DEBUG1 = profile.mapper_class;
-            CART_CSR_DEBUG2 = profile.pokey_mode;
+            cart_write_slot_from_header(slot, hdr, hdr_off, fi.fname, &profile);
+            for (uint8_t pi = 0u; pi < 32u; ++pi) {
+                g_slot_paths[slot][pi] = path[pi];
+                if (path[pi] == 0) break;
+            }
+            *valid_bitmap = (uint8_t)(*valid_bitmap | (1u << slot));
+            slot++;
+            *entry_count = slot;
+
+            if (slot == 1u) {
+                CART_CSR_DEBUG0 = version;
+                CART_CSR_DEBUG1 = profile.mapper_class;
+                CART_CSR_DEBUG2 = profile.pokey_mode;
+            }
         }
     }
 
     return overflow;
 }
 
-static void run_fat_scan(uint8_t use_roms_subdir) {
+static void run_fat_scan(void) {
     FRESULT fr;
-    uint8_t flags = META_FLAG_BUSY;
     uint8_t entry_count = 0u;
     uint8_t valid_bitmap = 0u;
     uint8_t last_error = 0u;
@@ -462,59 +432,153 @@ static void run_fat_scan(uint8_t use_roms_subdir) {
     CART_CSR_DEBUG1 = 0u;
     CART_CSR_DEBUG2 = 0u;
 
-    meta_clear_slots();
-    meta_set_header(flags, 0u, 0u, 0u);
-
     fr = (FRESULT)disk_initialize();
     if (fr != 0) {
-        loader_set_stage(0xE0u);
-        flags = (uint8_t)(META_FLAG_DONE | META_FLAG_ERROR);
-        meta_set_header(flags, 0u, 0u, 0xE0u);
+        loader_set_stage(0x60u);
         return;
     }
 
     loader_set_stage(0x13u);
     fr = pf_mount(&g_fs);
     if (fr != FR_OK) {
-        loader_set_stage(0xE2u);
-        flags = (uint8_t)(META_FLAG_DONE | META_FLAG_ERROR);
-        meta_set_header(flags, 0u, 0u, 0xE2u);
+        loader_set_stage(0x62u);
         return;
     }
 
     loader_set_stage(0x14u);
     loader_set_stage(0x15u);
 
-    overflow = scan_and_populate(use_roms_subdir, &valid_bitmap, &entry_count, &last_error);
-
-    flags = META_FLAG_DONE;
-    if (overflow) {
-        flags = (uint8_t)(flags | META_FLAG_OVER);
-    }
+    overflow = scan_and_populate(&valid_bitmap, &entry_count, &last_error);
+    (void)overflow;
 
     if (entry_count == 0u) {
-        flags = (uint8_t)(flags | META_FLAG_ERROR);
         if (last_error == 0u) {
-            last_error = use_roms_subdir ? 0xD8u : 0xEAu;
+            last_error = 0x6Au;
         }
         loader_set_stage(last_error);
     } else {
         loader_set_stage(0x1Cu);
     }
+}
 
-    meta_set_header(flags, entry_count, valid_bitmap, last_error);
+static void load_game(uint8_t slot) {
+    FRESULT fr;
+    UINT br;
+    uint8_t hdr[A78_HEADER_SIZE];
+    uint8_t hdr_off;
+    uint32_t rom_size;
+    uint8_t version;
+    uint16_t cart_type;
+    a78_profile_t profile;
+    uint32_t bytes_loaded = 0;
+    uint8_t chunk_buf[256];
+    uint32_t ram_offset = 0;
+
+    loader_set_stage(0x20u);
+
+    if (slot >= MENU_SLOT_COUNT || g_slot_paths[slot][0] == 0) {
+        loader_set_stage(0x6Eu);
+        return;
+    }
+
+    fr = pf_open(g_slot_paths[slot]);
+    if (fr != FR_OK) {
+        loader_set_stage(0x6Au);
+        return;
+    }
+
+    loader_set_stage(0x21u);
+    fr = pf_read(hdr, A78_HEADER_SIZE, &br);
+    if (fr != FR_OK || br < A78_HEADER_SIZE) {
+        loader_set_stage(0x69u);
+        return;
+    }
+
+    hdr_off = find_a78_header_offset(hdr);
+    if (hdr_off == 0xFFu) {
+        loader_set_stage(0x56u);
+        return;
+    }
+
+    version = hdr[hdr_off + A78_OFF_VERSION];
+    rom_size = read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]);
+    cart_type = read_be_u16(&hdr[hdr_off + A78_OFF_CART_TYPE]);
+
+    if (version >= 4u) {
+        decode_v4_profile(hdr[hdr_off + A78_OFF_V4_MAPPER], hdr[hdr_off + A78_OFF_V4_AUDIO], &profile);
+    } else {
+        decode_legacy_profile(cart_type, &profile);
+    }
+
+    // Configure POKEY and Mapper in FPGA CSR
+    uint8_t cfg = 0u;
+    if (profile.pokey_mode == POKEY_MODE_4000) {
+        cfg = 0x01u | (0u << 1);
+    } else if (profile.pokey_mode == POKEY_MODE_0450) {
+        cfg = 0x01u | (1u << 1);
+    } else if (profile.pokey_mode == POKEY_MODE_0800) {
+        cfg = 0x01u | (2u << 1);
+    } else if (profile.pokey_mode == POKEY_MODE_0440) {
+        cfg = 0x01u | (3u << 1);
+    }
+    cfg |= ((uint8_t)(profile.mapper_class & 0x0Fu)) << 3;
+    CART_CSR_CONFIG = cfg;
+
+    // If 32KB ROM (e.g. Choplifter, Food Fight):
+    // $4000-$7FFF is padded with $FF (16384 bytes)
+    // Game payload goes to $8000-$FFFF (Cart RAM offset 16384 to 49151)
+    if (rom_size <= 32768u) {
+        for (uint32_t i = 0u; i < 16384u; ++i) {
+            REG8(CART_RAM_BASE + i) = 0xFFu;
+        }
+        ram_offset = 16384u;
+    }
+
+    loader_set_stage(0x22u);
+    while (bytes_loaded < rom_size && (ram_offset + bytes_loaded) < 49152u) {
+        UINT to_read = sizeof(chunk_buf);
+        if (to_read > (rom_size - bytes_loaded)) {
+            to_read = (UINT)(rom_size - bytes_loaded);
+        }
+        fr = pf_read(chunk_buf, to_read, &br);
+        if (fr != FR_OK) {
+            loader_set_stage(0x69u);
+            return;
+        }
+        if (br == 0u) {
+            break;
+        }
+        for (UINT i = 0; i < br; ++i) {
+            REG8(CART_RAM_BASE + ram_offset + bytes_loaded + (uint32_t)i) = chunk_buf[i];
+        }
+        bytes_loaded += br;
+    }
+
+    if (bytes_loaded == 0u) {
+        loader_set_stage(0x69u);
+        return;
+    }
+
+    // Set status ready bit 7: ALL BYTES WRITTEN TO BSRAM!
+    loader_set_stage(0x80u);
 }
 
 int main(void) {
     uint8_t last_cmd = 0x00u;
 
-    run_fat_scan(1u);
+    CART_CSR_CONFIG = 0x03u; // Default $0450 POKEY enabled, linear mapper
+
+    run_fat_scan();
 
     while (1) {
         uint8_t cmd = CART_CSR_TRIGGER;
-        if ((cmd != last_cmd) && (cmd & 0x80u)) {
+        if (cmd != last_cmd) {
             last_cmd = cmd;
-            run_fat_scan((uint8_t)(cmd & 0x01u));
+            if (cmd == 64u) {
+                run_fat_scan();
+            } else if (cmd >= 128u && cmd <= 135u) {
+                load_game((uint8_t)(cmd - 128u));
+            }
         }
     }
 

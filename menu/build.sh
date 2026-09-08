@@ -40,6 +40,9 @@ if [ $? -eq 0 ]; then
     echo "Creating A78 header..."
     ${BASIC_PATH}/7800header -o -f a78info.cfg menu.bas.bin
     
+    echo "Packing 4KB menu chunks for FPGA BSRAM..."
+    python3 "${SCRIPT_DIR}/pack_menu_4k.py"
+    
     echo ""
     echo "✓ Compilation successful!"
     echo ""

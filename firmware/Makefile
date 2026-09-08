@@ -15,7 +15,7 @@ FEMTORV_TARGET = femtorv_firmware
 
 .PHONY: all clean
 
-all: $(TARGET).hex
+all: $(TARGET).hex $(FEMTORV_TARGET).hex
 
 femtorv: $(FEMTORV_TARGET).hex
 
@@ -37,8 +37,9 @@ $(FEMTORV_TARGET).bin: $(FEMTORV_TARGET).elf
 
 $(FEMTORV_TARGET).hex: $(FEMTORV_TARGET).bin
 	$(PYTHON) -c "import struct; data=open('$(FEMTORV_TARGET).bin','rb').read(); data += b'\x00'*(8192-len(data)); words=[struct.unpack('<I', data[i:i+4])[0] for i in range(0,8192,4)]; [print(f'{w:08x}') for w in words]" > $(FEMTORV_TARGET).hex
-	@echo "==> FemtoRV firmware hex generated successfully ($$(wc -l < $(FEMTORV_TARGET).hex) 32-bit words)"
+	$(PYTHON) -c "data=open('$(FEMTORV_TARGET).bin','rb').read(); data += b'\x00'*(8192-len(data)); [open(f'femtorv_chunk_{i:02d}.hex','w').write(''.join(f'{b:02x}\n' for b in data[i*2048:(i+1)*2048])) for i in range(4)]"
+	@echo "==> FemtoRV firmware hex and 4x 2KB chunks generated successfully"
 
 clean:
 	rm -f $(TARGET).elf $(TARGET).bin $(TARGET).hex
-	rm -f $(FEMTORV_TARGET).elf $(FEMTORV_TARGET).bin $(FEMTORV_TARGET).hex
+	rm -f $(FEMTORV_TARGET).elf $(FEMTORV_TARGET).bin $(FEMTORV_TARGET).hex femtorv_chunk_*.hex

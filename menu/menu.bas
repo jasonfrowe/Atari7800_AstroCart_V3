@@ -141,32 +141,35 @@ flash_loop
  flash_count = flash_count - 1
  if flash_count > 0 then goto flash_loop
  
- ; Bit 7 marks the write as a load request.
- fpga_trigger = selected_game + 128
-
-wait_loop
- restorescreen
- drawscreen
  asm
-   lda $7FF0
-   bpl .keep_waiting
+   sei
 
-   ; Copy 6-byte handover stub to Zero-Page RAM ($80-$85)
+   ; Copy 18-byte handover stub to Zero-Page RAM ($80-$91)
    ldx #0
 .copy_handover_stub
    lda .handover_stub_code,x
    sta $80,x
    inx
-   cpx #6
+   cpx #18
    bcc .copy_handover_stub
 
-   lda #$A5
+   ; Disable MARIA DMA so Maria doesn't access Cart RAM while SD card is loading
+   lda #0
+   sta $3C
+
+   ; Pass selected_game + 128 in accumulator A and jump to Zero-Page RAM
+   lda selected_game
+   ora #$80
    jmp $80
 
 .handover_stub_code
-   sta $2200
-   jmp ($FFFC)
-
-.keep_waiting
+   sta $2200        ; $80: Trigger load on FPGA / FemtoRV
+.wait_loaded
+   lda $7FF0        ; $83: Poll FPGA status register
+   sta $20          ; $86: Visual feedback: display status on TV background color!
+   bpl .wait_loaded ; $88: Loop until bit 7 is set (game loaded)
+   lda #$A5         ; $8A: Acknowledge byte
+   sta $2200        ; $8C: Switch FPGA to game mode immediately
+   jmp ($FFFC)      ; $8F: Jump to new game reset vector
 end
- goto wait_loop
+ return

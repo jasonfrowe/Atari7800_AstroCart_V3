@@ -63,6 +63,27 @@ def convert_a78_split(game_a78, menu_a78):
     _emit_chunks("rom_chunk", game_data, 24)
     _emit_chunks("menu_chunk", menu_data, 4)
 
+    with open("menu_payload.hex", "w") as f:
+        for b in menu_data:
+            f.write(f"{b:02x}\n")
+    print("[CONVERT] Generated menu_payload.hex (8192 lines).")
+
+    # Also keep packed 4KB image for inspection
+    packed_menu = bytearray(4096)
+    for scanline in range(8):
+        src_offset = scanline * 256
+        dst_offset = scanline * 128
+        packed_menu[dst_offset : dst_offset + 128] = menu_data[src_offset : src_offset + 128]
+    packed_menu[0x400 : 0x500] = menu_data[0x800 : 0x900]
+    packed_menu[0x500 : 0x900] = menu_data[0x900 : 0xD00]
+    packed_menu[0x900 : 0xF00] = menu_data[0x1000 : 0x1600]
+    packed_menu[0xF00 : 0xF80] = menu_data[0x1F80 : 0x2000]
+
+    with open("menu_4k.hex", "w") as f:
+        for b in packed_menu:
+            f.write(f"{b:02x}\n")
+    print("[CONVERT] Generated menu_4k.hex (4096 lines).")
+
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         print("Usage: python3 convert_a78_split.py <game.a78> <menu.a78>")

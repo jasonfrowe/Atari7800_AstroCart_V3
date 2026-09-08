@@ -17,6 +17,7 @@
 0.condpart15             ec51                  
 0.condpart16             ec5b                  
 0.condpart17             ec7f                  
+0.condpart18             ecc1                  
 0.condpart2              e9c0                  
 0.condpart3              e9e4                  
 0.condpart4              ea08                  
@@ -25,15 +26,12 @@
 0.condpart7              ea74                  
 0.condpart8              ea98                  
 0.condpart9              eabc                  
-0.copy_handover_stub     ec97              (R )
 0.draw_cursor            eadb              (R )
 0.draw_game_list         e9ba              (R )
 0.draw_title             e969              (R )
 0.flash_loop             ec64              (R )
-0.handover_stub_code     eca6              (R )
 0.HSselect               0000 ????         (R )
 0.HSup                   0000 ????         (R )
-0.keep_waiting           ecac              (R )
 0.L00                    e900                  
 0.L01                    e900                  
 0.L010                   e92f                  
@@ -104,7 +102,9 @@
 0.L07                    e917                  
 0.L070                   ec8d                  
 0.L071                   ec90                  
-0.L072                   ecac                  
+0.L072                   ec94                  
+0.L073                   ecbb                  
+0.L074                   ecc4                  
 0.L08                    e923                  
 0.L09                    e92f                  
 0.main_loop              e947              (R )
@@ -130,6 +130,7 @@
 0.skipL058               ec55              (R )
 0.skipL059               ec5f              (R )
 0.skipL067               ec82              (R )
+0.skipL073               ecc4              (R )
 0.topscreenroutine       0000 ????         (R )
 0.userinterrupt          0000 ????         (R )
 0.wait_loop              ec8a              (R )
@@ -160,8 +161,8 @@ AUDV0                    0019              (R )
 AUDV1                    001a              (R )
 avoxdetected             210a                  
 AVOXVOICE                0000 ????         (R )
-B                        00e7                  
 b                        00e7                  
+B                        00e7                  
 BACKGRND                 0020              (R )
 BANK_WAS_SET             0001              (R )
 BANKRAM                  0000 ????         (R )
@@ -186,8 +187,8 @@ buttonhandlerlo          f1df              (R )
 buttonreadloop           f041              (R )
 buttonreadloopreturn     f057              (R )
 BUZZBASS                 0000 ????         (R )
-C                        00e8                  
 c                        00e8                  
+C                        00e8                  
 canary                   01c2              (R )
 CANARYOFF                0000 ????         (R )
 carryonpausing           f127              (R )
@@ -212,6 +213,7 @@ continuescheduletiasfx   f29f
 controller0statesave     01be              (R )
 controller1statesave     01bf              (R )
 controlsusing2buttoncode f1c5                  
+copy_handover_stub       eca6              (R )
 countdownseconds         01a5              (R )
 CRASHDUMP                0000 ????         (R )
 createallgamedlls        f3ea              (R )
@@ -221,8 +223,8 @@ CTLSWB                   0283              (R )
 CTRL                     003c              (R )
 currentbank              2104                  
 currentrambank           2105                  
-d                        00e9                  
 D                        00e9                  
+d                        00e9                  
 DBOFFSET                 0070                  
 DEBUGCALC                0091                  
 DEBUGDRAW                00c1                  
@@ -249,7 +251,8 @@ dlpnt                    0063              (R )
 DLPOINTH                 f52b              (R )
 DLPOINTL                 f543              (R )
 dlzero                   2101                  
-DMAHOLEEND0              ecaf                  
+DMAHOLEEND0              ecc7                  
+do_handover              eca4              (R )
 doneSPDL                 f35d              (R )
 DOUBLEBUFFER             0000 ????         (R )
 doublebufferbufferdirty  00d7                  
@@ -273,8 +276,8 @@ eeprombuffer             1fe0
 enterpausestate2         f11a              (R )
 exitplotsprite1          f2fa              (R )
 EXTRADLMEMORY            0000 ????         (R )
-F                        00eb                  
 f                        00eb                  
+F                        00eb                  
 FINESCROLLENABLED        0000 ????         (R )
 finescrollx              01af                  
 finescrolly              01b0                  
@@ -287,18 +290,19 @@ frameskipdo              f166              (R )
 FRAMESKIPGLITCHFIX       0000 ????         (R )
 FRAMESKIPGLITCHFIXWEAK   0000 ????         (R )
 frameslost               213e              (R )
-G                        00ec                  
 g                        00ec                  
+G                        00ec                  
 game                     e900              (R )
 game_count               00e6              (R )
 GAMEDESCRIPTION          4e616d65      str     (R ) "Test Name"
 GAMEDESCRIPTIONSET       0001              (R )
 gamedifficulty           2134                  
-gameend                  ecaf              (R )
+gameend                  ecc7              (R )
 gamelist_buffer          e800                  
 gunbuttonhandler         f1c5              (R )
-h                        00ed                  
 H                        00ed                  
+h                        00ed                  
+handover_stub_code       ecb5              (R )
 hiscore.asm              0000 ????         (R )
 hiscorefont              0000 ????         (R )
 HSCHARSHERE              0000 ????         (R )
@@ -332,8 +336,8 @@ HSSUPPORT                0000 ????         (R )
 hsswcha                  2139                  
 HSVoxHi                  00a3                  
 HSVoxLo                  00a4                  
-i                        00ee                  
 I                        00ee                  
+i                        00ee                  
 inactivechannelcount     00bf                  
 included.7800vox.asm     0000 ????         (R )
 included.fourbitfade.asm 0000 ????         (R )
@@ -380,8 +384,9 @@ joy_delay                00e8              (R )
 joybuttonhandler         f185              (R )
 joybuttonmode            01b1              (R )
 joybuttonpadhandler      f170              (R )
-k                        00f0                  
 K                        00f0                  
+k                        00f0                  
+keep_waiting             ecbb              (R )
 keypadmatrix0a           01ba                  
 keypadmatrix0b           01bc                  
 keypadmatrix0c           01be                  
@@ -470,8 +475,8 @@ NOTIALOCK                0000 ????         (R )
 ntsc2palskipcheck        f162              (R )
 ntscslowframe            01b6              (R )
 NVLINES                  0019                  
-o                        00f4                  
 O                        00f4                  
+o                        00f4                  
 OFFSET                   0038              (R )
 overscanDLLstart         213d              (R )
 p                        00f5                  
@@ -746,7 +751,7 @@ sSWCHA                   2131              (R )
 start                    f4ad                  
 START                    f4ad              (R )
 START_OF_ROM             0000                  
-status_temp              00eb                  
+status_temp              00eb              (R )
 SWACNT                   0281                  
 SWBCNT                   0283                  
 SWCHA                    0280              (R )
@@ -802,8 +807,8 @@ unlockzonex              f35e
 USED_ADJUSTVISIBLE       0000 ????         (R )
 USED_PLOTVALUE           0000 ????         (R )
 USED_PLOTVALUEEXTRA      0000 ????         (R )
-V                        00fb                  
 v                        00fb                  
+V                        00fb                  
 valbufend                01ad              (R )
 valbufendsave            01ae              (R )
 VALBUFFER                2000                  
@@ -2475,10 +2480,10 @@ XCTRL2                   0478
 XCTRL3                   047c                  
 XCTRL4                   0471                  
 XCTRL5                   0472                  
-Y                        00fe                  
 y                        00fe                  
-z                        00ff                  
+Y                        00fe                  
 Z                        00ff                  
+z                        00ff                  
 zerosfx                  f294              (R )
 ZONE0ADDRESS             1880                  
 ZONE10ADDRESS            1ba0                  

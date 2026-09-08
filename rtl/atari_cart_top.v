@@ -259,7 +259,7 @@ module atari_cart_top #(
             assign sideband_sd_cs      = 1'b1;
             assign sideband_sd_mosi    = 1'b0;
             assign sideband_sd_clk     = 1'b0;
-            assign sideband_status_val = game_ready ? 8'h80 : 8'h00;
+            assign sideband_status_val = 8'h00;
             assign sideband_meta_rdata = 8'hFF;
             assign sideband_cart_ram_we = 1'b0;
             assign sideband_cart_ram_addr = 16'h0000;
@@ -482,7 +482,7 @@ module atari_cart_top #(
                     game_ready     <= 1'b0;
                     post_ack_pending <= 1'b0;
                     post_ack_delay <= 16'd0;
-                end else if (d_in_sync[7] && (d_in_sync[6:3] == 4'b0001)) begin
+                end else if (H5_SIDEBAND_EN && d_in_sync[7] && (d_in_sync[6:3] == 4'b0001)) begin
                     // Arm handover only for slot load commands 0x88..0x8F.
                     switch_pending <= 1'b1;
                     switch_delay   <= 16'd0;

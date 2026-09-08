@@ -151,30 +151,30 @@ wait_loop
  asm
    lda $7FF0
    cmp #$80
-    beq .do_handover
-    bcc .keep_waiting
-    lda #1
-    sta status_temp
-    jmp .keep_waiting
+  beq do_handover
+  bcc keep_waiting
+  lda #1
+  sta status_temp
+  jmp keep_waiting
 
- .do_handover
+do_handover
    ; Copy 6-byte handover stub to Zero-Page RAM ($80-$85)
    ldx #0
-.copy_handover_stub
-   lda .handover_stub_code,x
+copy_handover_stub
+   lda handover_stub_code,x
    sta $80,x
    inx
    cpx #6
-   bcc .copy_handover_stub
+   bcc copy_handover_stub
 
    lda #$A5
    jmp $80
 
-.handover_stub_code
+handover_stub_code
    sta $2200
    jmp ($FFFC)
 
-.keep_waiting
+keep_waiting
 end
  if status_temp = 1 then goto main_loop
  goto wait_loop

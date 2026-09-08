@@ -113,9 +113,9 @@ Completed:
 
 Open:
 
-1. Move from single-header probe to directory-wide title extraction for menu slots.
-2. Define and wire a stable shared-memory window so menu code can read discovered titles.
-3. Integrate menu selection index to resolved file path metadata for launch flow.
+1. Integrate menu selection index to resolved file path metadata for launch flow.
+2. Add file key metadata per slot (for deterministic post-selection open/load).
+3. Add stronger retry/error policy for mixed-valid directories.
 
 ## Full Plan: SD Card -> A78 Header -> Menu Population
 
@@ -159,6 +159,28 @@ Exit criteria:
 
 1. Menu can read static test payload from this window with no SD dependency.
 
+Implemented layout (current):
+
+1. Window base: 0xE800-0xE9FF (read-only in current Phase B implementation).
+2. Header bytes:
+   - 0xE800: signature[0] = 'M'
+   - 0xE801: signature[1] = 'D'
+   - 0xE802: format_version = 0x01
+   - 0xE803: scan_flags (bit0 busy, bit1 done, bit2 error)
+   - 0xE804: entry_count
+   - 0xE805: valid_bitmap (bit N = slot N valid)
+   - 0xE806: last_error
+3. Slot table:
+   - slot_base = 0xE820
+   - slot_stride = 36 bytes
+   - slot fields:
+     - +0..+31: title[32]
+     - +32: mapper
+     - +33: audio
+     - +34: slot_flags
+     - +35: reserved
+4. Static payload includes two valid demo slots for no-SD smoke testing.
+
 ### Phase C: Expand FAT Scan from First-Match to Multi-Entry Enumeration
 
 Goal:
@@ -179,6 +201,12 @@ Tasks:
 Exit criteria:
 
 1. Slots 0..N-1 contain valid, deterministic entries across repeated scans.
+
+Status:
+
+1. Implemented on FemtoRV test path.
+2. Metadata slots are now populated dynamically from FAT directory enumeration and A78 header parsing.
+3. Entry count, validity bitmap, overflow flag, and last-error fields are updated by firmware after each scan.
 
 ### Phase D: Connect 7800basic Menu to Dynamic Slot Data
 

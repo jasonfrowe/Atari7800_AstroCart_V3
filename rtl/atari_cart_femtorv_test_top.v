@@ -79,6 +79,7 @@ module atari_cart_femtorv_test_top #(
     (* syn_keep = 1 *) wire [7:0] debug1;
     (* syn_keep = 1 *) wire [7:0] debug2;
     (* syn_keep = 1 *) wire [7:0] cpu_probe;
+    (* syn_keep = 1 *) wire [7:0] menu_meta_rdata;
 
     (* keep = "true", syn_keep = 1, dont_touch = "true" *) femtorv_service_soc #(
         .FIRMWARE_HEX(FIRMWARE_HEX)
@@ -90,6 +91,8 @@ module atari_cart_femtorv_test_top #(
         .debug0     (debug0),
         .debug1     (debug1),
         .debug2     (debug2),
+        .cart_addr  (a_sync),
+        .cart_rdata (menu_meta_rdata),
         .cpu_probe  (cpu_probe),
         .sd_cs      (sd_cs),
         .sd_mosi    (sd_mosi),
@@ -101,18 +104,20 @@ module atari_cart_femtorv_test_top #(
                          (a_sync == 16'h7FF1) ||
                          (a_sync == 16'h7FF2) ||
                          (a_sync == 16'h7FF3);
+    wire is_meta_addr = ((a_sync >= 16'hE800) && (a_sync <= 16'hE9FF));
 
     wire [7:0] debug_data_out = (a_sync == 16'h7FF0) ? status_val :
                                 (a_sync == 16'h7FF1) ? debug0 :
                                 (a_sync == 16'h7FF2) ? debug1 :
                                 (a_sync == 16'h7FF3) ? debug2 : 8'hFF;
+    wire [7:0] cart_data_out = is_meta_addr ? menu_meta_rdata : debug_data_out;
 
     wire is_cart_addr = (a_sync >= 16'h4000);
     wire is_bus_read = rw_is_read && (is_cart_addr || is_debug_addr);
 
     assign buf_dir = is_bus_read;
     assign buf_oe = 1'b0;
-    assign d = (is_bus_read && (buf_dir == 1'b1)) ? debug_data_out : 8'hZZ;
+    assign d = (is_bus_read && (buf_dir == 1'b1)) ? cart_data_out : 8'hZZ;
 
     assign irq = 1'b0;
     assign audio = 1'b0;

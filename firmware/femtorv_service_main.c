@@ -15,10 +15,30 @@
 #define CART_CSR_DEBUG1   REG8(0xC0000010u)
 #define CART_CSR_DEBUG2   REG8(0xC0000014u)
 
+#define META_BASE         0xE0000000u
+
+#define META_HDR_SIG0     0x00u
+#define META_HDR_SIG1     0x01u
+#define META_HDR_VER      0x02u
+#define META_HDR_FLAGS    0x03u
+#define META_HDR_COUNT    0x04u
+#define META_HDR_VALID    0x05u
+#define META_HDR_ERROR    0x06u
+
+#define META_SLOT_BASE    0x20u
+#define META_SLOT_STRIDE  36u
+#define META_SLOT_COUNT   8u
+
+#define META_FLAG_BUSY    0x01u
+#define META_FLAG_DONE    0x02u
+#define META_FLAG_ERROR   0x04u
+#define META_FLAG_OVER    0x08u
+
 #define A78_HEADER_SIZE 128u
 #define A78_OFF_VERSION 0u
 #define A78_OFF_MAGIC   1u
 #define A78_OFF_ROM_SIZE 49u
+#define A78_OFF_TITLE    17u
 #define A78_OFF_V4_MAPPER 64u
 #define A78_OFF_V4_AUDIO 66u
 
@@ -26,6 +46,82 @@ static FATFS g_fs;
 
 void loader_set_stage(BYTE stage) {
     CART_CSR_STATUS = stage;
+}
+
+static void meta_write(uint16_t off, uint8_t value) {
+    REG8(META_BASE + (uint32_t)off) = value;
+}
+
+static void meta_set_header(uint8_t flags, uint8_t count, uint8_t valid, uint8_t error) {
+    meta_write(META_HDR_SIG0, 'M');
+    meta_write(META_HDR_SIG1, 'D');
+    meta_write(META_HDR_VER, 0x01u);
+    meta_write(META_HDR_FLAGS, flags);
+    meta_write(META_HDR_COUNT, count);
+    meta_write(META_HDR_VALID, valid);
+    meta_write(META_HDR_ERROR, error);
+}
+
+static uint8_t sanitize_char(uint8_t c) {
+    if (c < 0x20u || c > 0x7Eu) {
+        return ' ';
+    }
+    return c;
+}
+
+static void meta_clear_slots(void) {
+    uint16_t i;
+    for (i = 0u; i < (uint16_t)META_SLOT_COUNT * (uint16_t)META_SLOT_STRIDE; ++i) {
+        meta_write((uint16_t)(META_SLOT_BASE + i), 0u);
+    }
+}
+
+static void meta_write_slot_title(uint8_t slot, const char *text) {
+    uint16_t base = (uint16_t)(META_SLOT_BASE + (uint16_t)slot * (uint16_t)META_SLOT_STRIDE);
+    uint8_t i;
+
+    for (i = 0u; i < 32u; ++i) {
+        uint8_t c = (uint8_t)text[i];
+        if (c == 0u) {
+            break;
+        }
+        meta_write((uint16_t)(base + i), sanitize_char(c));
+    }
+
+    for (; i < 32u; ++i) {
+        meta_write((uint16_t)(base + i), 0u);
+    }
+}
+
+static void meta_write_slot_from_header(uint8_t slot, const uint8_t *hdr, const char *fallback_name) {
+    uint16_t base = (uint16_t)(META_SLOT_BASE + (uint16_t)slot * (uint16_t)META_SLOT_STRIDE);
+    uint8_t version = hdr[A78_OFF_VERSION];
+    uint8_t i;
+    uint8_t has_title = 0u;
+
+    for (i = 0u; i < 32u; ++i) {
+        uint8_t c = hdr[A78_OFF_TITLE + i];
+        if (c == 0u) {
+            break;
+        }
+        c = sanitize_char(c);
+        if (c != ' ') {
+            has_title = 1u;
+        }
+        meta_write((uint16_t)(base + i), c);
+    }
+    for (; i < 32u; ++i) {
+        meta_write((uint16_t)(base + i), 0u);
+    }
+
+    if (!has_title) {
+        meta_write_slot_title(slot, fallback_name);
+    }
+
+    meta_write((uint16_t)(base + 32u), (version >= 4u) ? hdr[A78_OFF_V4_MAPPER] : 0u);
+    meta_write((uint16_t)(base + 33u), (version >= 4u) ? hdr[A78_OFF_V4_AUDIO] : 0u);
+    meta_write((uint16_t)(base + 34u), 0x01u);
+    meta_write((uint16_t)(base + 35u), 0u);
 }
 
 static uint8_t ascii_upper(uint8_t c) {
@@ -68,15 +164,40 @@ static uint8_t has_a78_extension(const char *name) {
     return 0u;
 }
 
-static uint8_t find_first_a78_path(uint8_t use_roms_subdir, char *out_path, uint8_t out_len) {
+static uint8_t build_path(uint8_t use_roms_subdir, const char *name, char *out_path, uint8_t out_len) {
+    uint8_t i = 0u;
+    uint8_t o = 0u;
+
+    if (use_roms_subdir) {
+        const char prefix[] = "ROMS/";
+        while (prefix[i] != 0u && o < (uint8_t)(out_len - 1u)) {
+            out_path[o++] = prefix[i++];
+        }
+        i = 0u;
+    }
+
+    while (name[i] != 0u && o < (uint8_t)(out_len - 1u)) {
+        out_path[o++] = name[i++];
+    }
+    out_path[o] = 0;
+    return (o > 0u) ? 1u : 0u;
+}
+
+static uint8_t scan_and_populate(uint8_t use_roms_subdir, uint8_t *valid_bitmap, uint8_t *entry_count, uint8_t *last_error) {
     DIR dj;
     FILINFO fi;
     FRESULT fr;
     const char *dir_path = use_roms_subdir ? "ROMS" : "";
+    uint8_t slot = 0u;
+    uint8_t overflow = 0u;
+    uint8_t hdr[A78_HEADER_SIZE];
+    UINT br;
+    char path[32];
 
     loader_set_stage(0x16u);
     fr = pf_opendir(&dj, dir_path);
     if (fr != FR_OK) {
+        *last_error = use_roms_subdir ? 0xD8u : 0xEAu;
         return 0u;
     }
 
@@ -84,10 +205,11 @@ static uint8_t find_first_a78_path(uint8_t use_roms_subdir, char *out_path, uint
     while (1) {
         fr = pf_readdir(&dj, &fi);
         if (fr != FR_OK) {
-            return 0u;
+            *last_error = 0xEAu;
+            break;
         }
         if (fi.fname[0] == 0) {
-            return 0u;
+            break;
         }
         if ((fi.fattrib & AM_DIR) != 0u) {
             continue;
@@ -96,46 +218,76 @@ static uint8_t find_first_a78_path(uint8_t use_roms_subdir, char *out_path, uint
             continue;
         }
 
-        if (use_roms_subdir) {
-            const char prefix[] = "ROMS/";
-            uint8_t i = 0u;
-            uint8_t o = 0u;
-
-            while (prefix[i] != 0u && o < (uint8_t)(out_len - 1u)) {
-                out_path[o++] = prefix[i++];
-            }
-            i = 0u;
-            while (fi.fname[i] != 0u && o < (uint8_t)(out_len - 1u)) {
-                out_path[o++] = fi.fname[i++];
-            }
-            out_path[o] = 0;
-        } else {
-            uint8_t i = 0u;
-            while (fi.fname[i] != 0u && i < (uint8_t)(out_len - 1u)) {
-                out_path[i] = fi.fname[i];
-                ++i;
-            }
-            out_path[i] = 0;
+        if (slot >= META_SLOT_COUNT) {
+            overflow = 1u;
+            continue;
         }
 
-        return 1u;
+        if (!build_path(use_roms_subdir, fi.fname, path, sizeof(path))) {
+            *last_error = 0xEAu;
+            continue;
+        }
+
+        loader_set_stage(0x19u);
+        fr = pf_open(path);
+        if (fr != FR_OK) {
+            *last_error = 0xEAu;
+            continue;
+        }
+
+        loader_set_stage(0x1Au);
+        br = 0u;
+        fr = pf_read(hdr, A78_HEADER_SIZE, &br);
+        if (fr != FR_OK || br < A78_HEADER_SIZE) {
+            *last_error = 0xE9u;
+            continue;
+        }
+
+        loader_set_stage(0x1Bu);
+        if (!is_a78_magic(hdr)) {
+            *last_error = 0xD6u;
+            continue;
+        }
+        if (read_be_u32(&hdr[A78_OFF_ROM_SIZE]) == 0u) {
+            *last_error = 0xD7u;
+            continue;
+        }
+
+        meta_write_slot_from_header(slot, hdr, fi.fname);
+        *valid_bitmap = (uint8_t)(*valid_bitmap | (1u << slot));
+        slot++;
+        *entry_count = slot;
+
+        if (slot == 1u) {
+            CART_CSR_DEBUG0 = hdr[A78_OFF_VERSION];
+            CART_CSR_DEBUG1 = hdr[A78_OFF_V4_MAPPER];
+            CART_CSR_DEBUG2 = hdr[A78_OFF_V4_AUDIO];
+        }
     }
+
+    return overflow;
 }
 
 static void run_fat_scan(uint8_t use_roms_subdir) {
     FRESULT fr;
-    UINT br = 0u;
-    uint8_t hdr[A78_HEADER_SIZE];
-    uint8_t i;
-    char a78_path[32];
+    uint8_t flags = META_FLAG_BUSY;
+    uint8_t entry_count = 0u;
+    uint8_t valid_bitmap = 0u;
+    uint8_t last_error = 0u;
+    uint8_t overflow;
 
     CART_CSR_DEBUG0 = 0u;
     CART_CSR_DEBUG1 = 0u;
     CART_CSR_DEBUG2 = 0u;
 
+    meta_clear_slots();
+    meta_set_header(flags, 0u, 0u, 0u);
+
     fr = (FRESULT)disk_initialize();
     if (fr != 0) {
         loader_set_stage(0xE0u);
+        flags = (uint8_t)(META_FLAG_DONE | META_FLAG_ERROR);
+        meta_set_header(flags, 0u, 0u, 0xE0u);
         return;
     }
 
@@ -143,52 +295,32 @@ static void run_fat_scan(uint8_t use_roms_subdir) {
     fr = pf_mount(&g_fs);
     if (fr != FR_OK) {
         loader_set_stage(0xE2u);
+        flags = (uint8_t)(META_FLAG_DONE | META_FLAG_ERROR);
+        meta_set_header(flags, 0u, 0u, 0xE2u);
         return;
     }
 
     loader_set_stage(0x14u);
     loader_set_stage(0x15u);
 
-    if (!find_first_a78_path(use_roms_subdir, a78_path, sizeof(a78_path))) {
-        loader_set_stage(use_roms_subdir ? 0xD8u : 0xEAu);
-        return;
+    overflow = scan_and_populate(use_roms_subdir, &valid_bitmap, &entry_count, &last_error);
+
+    flags = META_FLAG_DONE;
+    if (overflow) {
+        flags = (uint8_t)(flags | META_FLAG_OVER);
     }
 
-    loader_set_stage(0x19u);
-    fr = pf_open(a78_path);
-    if (fr != FR_OK) {
-        loader_set_stage(0xEAu);
-        return;
-    }
-
-    loader_set_stage(0x1Au);
-    fr = pf_read(hdr, A78_HEADER_SIZE, &br);
-    if (fr != FR_OK || br < A78_HEADER_SIZE) {
-        loader_set_stage(0xE9u);
-        return;
-    }
-
-    loader_set_stage(0x1Bu);
-    if (!is_a78_magic(hdr)) {
-        loader_set_stage(0xD6u);
-        return;
-    }
-
-    if (read_be_u32(&hdr[A78_OFF_ROM_SIZE]) == 0u) {
-        loader_set_stage(0xD7u);
-        return;
-    }
-
-    for (i = 0u; i < A78_HEADER_SIZE; ++i) {
-        if (hdr[i] == 0xFFu) {
-            break;
+    if (entry_count == 0u) {
+        flags = (uint8_t)(flags | META_FLAG_ERROR);
+        if (last_error == 0u) {
+            last_error = use_roms_subdir ? 0xD8u : 0xEAu;
         }
+        loader_set_stage(last_error);
+    } else {
+        loader_set_stage(0x1Cu);
     }
 
-    CART_CSR_DEBUG0 = hdr[A78_OFF_VERSION];
-    CART_CSR_DEBUG1 = hdr[A78_OFF_V4_MAPPER];
-    CART_CSR_DEBUG2 = hdr[A78_OFF_V4_AUDIO];
-    loader_set_stage(0x1Cu);
+    meta_set_header(flags, entry_count, valid_bitmap, last_error);
 }
 
 int main(void) {

@@ -1,7 +1,7 @@
 // ============================================================================
 // Module: femtorv_service_soc
 // Description: FemtoRV32-based service plane with local SRAM and MMIO bridge
-//              for SD/FAT header probing telemetry.
+//              for SD/FAT header probing telemetry and menu metadata window.
 // ============================================================================
 
 `default_nettype none
@@ -16,6 +16,8 @@
     output reg  [7:0] debug0,
     output reg  [7:0] debug1,
     output reg  [7:0] debug2,
+    input  wire [15:0] cart_addr,
+    output reg  [7:0] cart_rdata,
     output wire [7:0] cpu_probe,
     output wire       sd_cs,
     output wire       sd_mosi,
@@ -62,10 +64,34 @@
     reg [7:0]  spi_wdata_req;
 
     wire [7:0] spi_rdata;
+    wire is_meta = (mem_addr[31:28] == 4'hE);
+
+    wire [7:0] cart_meta_off = cart_addr[7:0];
+    wire       cart_meta_sel = (cart_addr[15:8] == 8'hE8) || (cart_addr[15:8] == 8'hE9);
+
+    reg        meta_we;
+    reg [8:0]  meta_addr;
+    reg [7:0]  meta_wdata;
+    reg [7:0]  meta_raddr_cart;
+    reg        meta_bank_cart;
+
+    wire [7:0] meta0_rdata;
+    wire [7:0] meta1_rdata;
+
+    wire       meta0_we = meta_we && (meta_addr[8] == 1'b0);
+    wire       meta1_we = meta_we && (meta_addr[8] == 1'b1);
 
     // Export live bus activity bits; include SPI readback bit to keep the SPI
     // bridge in-use for synthesis even before full firmware bring-up.
     assign cpu_probe = {mem_rstrb, (|mem_wmask), mem_addr[4:0], spi_rdata[0]};
+
+    always @(*) begin
+        if (cart_meta_sel) begin
+            cart_rdata = meta_bank_cart ? meta1_rdata : meta0_rdata;
+        end else begin
+            cart_rdata = 8'hFF;
+        end
+    end
 
     (* keep = "true" *) FemtoRV32 #(
         .RESET_ADDR(32'h0000_0000),
@@ -108,6 +134,26 @@
         .dout  (dram_dout)
     );
 
+    gowin_sdpb_mailbox u_meta_bank0 (
+        .clk    (clk),
+        .rst    (~rst_n),
+        .a_we   (meta0_we),
+        .a_addr (meta_addr[7:0]),
+        .a_wdata(meta_wdata),
+        .b_addr (meta_raddr_cart),
+        .b_rdata(meta0_rdata)
+    );
+
+    gowin_sdpb_mailbox u_meta_bank1 (
+        .clk    (clk),
+        .rst    (~rst_n),
+        .a_we   (meta1_we),
+        .a_addr (meta_addr[7:0]),
+        .a_wdata(meta_wdata),
+        .b_addr (meta_raddr_cart),
+        .b_rdata(meta1_rdata)
+    );
+
     (* keep = "true", syn_keep = 1, dont_touch = "true" *) spi_sd u_spi (
         .clk     (clk),
         .rst_n   (rst_n),
@@ -141,6 +187,11 @@
             read_pending <= 1'b0;
             read_source  <= RD_NONE;
             read_addr    <= 32'h0;
+            meta_we      <= 1'b0;
+            meta_addr    <= 9'h000;
+            meta_wdata   <= 8'h00;
+            meta_raddr_cart <= 8'h00;
+            meta_bank_cart  <= 1'b0;
             spi_cs_req   <= 1'b0;
             spi_we_req   <= 1'b0;
             spi_addr_req <= 2'b00;
@@ -148,6 +199,12 @@
         end else begin
             iram_wre   <= 4'b0000;
             dram_wre   <= 4'b0000;
+            meta_we    <= 1'b0;
+
+            // Continuously sample cart metadata read address for synchronous RAM B-port.
+            meta_raddr_cart <= cart_meta_off;
+            meta_bank_cart  <= cart_addr[8];
+
             // Optional external SPI probe mode via trigger bit 6.
             spi_cs_req <= trigger_val[6];
             spi_we_req <= 1'b0;
@@ -164,6 +221,25 @@
                 dram_ad  <= mem_addr[12:2];
                 dram_din <= mem_wdata;
                 dram_wre <= mem_wmask;
+            end else if ((|mem_wmask) && is_meta) begin
+                // Phase C firmware writes metadata window via byte stores.
+                if (mem_wmask[0]) begin
+                    meta_we    <= 1'b1;
+                    meta_addr  <= mem_addr[8:0];
+                    meta_wdata <= mem_wdata[7:0];
+                end else if (mem_wmask[1]) begin
+                    meta_we    <= 1'b1;
+                    meta_addr  <= mem_addr[8:0] + 9'd1;
+                    meta_wdata <= mem_wdata[15:8];
+                end else if (mem_wmask[2]) begin
+                    meta_we    <= 1'b1;
+                    meta_addr  <= mem_addr[8:0] + 9'd2;
+                    meta_wdata <= mem_wdata[23:16];
+                end else if (mem_wmask[3]) begin
+                    meta_we    <= 1'b1;
+                    meta_addr  <= mem_addr[8:0] + 9'd3;
+                    meta_wdata <= mem_wdata[31:24];
+                end
             end else if ((|mem_wmask) && is_spi) begin
                 spi_cs_req    <= 1'b1;
                 spi_we_req    <= 1'b1;
@@ -189,6 +265,8 @@
                 end else if (is_dram) begin
                     dram_ad <= mem_addr[12:2];
                     read_source <= RD_DRAM;
+                end else if (is_meta) begin
+                    read_source <= RD_NONE;
                 end else if (is_spi) begin
                     spi_cs_req <= 1'b1;
                     spi_we_req <= 1'b0;

@@ -684,8 +684,9 @@ static void run_slot_load(uint8_t slot) {
         CART_CSR_DEBUG0 = slot;
         CART_CSR_DEBUG1 = last_error;
         CART_CSR_DEBUG2 = 0xFFu;
-        // Preserve existing launch path semantics even if load is rejected.
-        loader_set_stage(0x80u);
+        // Report the actual failure so menu-side handover logic does not jump
+        // into an invalid/empty image.
+        loader_set_stage(last_error ? last_error : 0xEFu);
         return;
     }
 

@@ -35,7 +35,7 @@ add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/haz
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/hazard5/hdl/arith/hazard5_shift_barrel.v"
 add_file -type cst "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/atari.cst"
 add_file -type sdc "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/timing.sdc"
-set_option -top_module atari_cart_top_h5
+set_option -top_module atari_cart_top
 set_option -verilog_std sysv2017
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1

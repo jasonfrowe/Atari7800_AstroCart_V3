@@ -147,10 +147,17 @@ flash_loop
 wait_loop
  restorescreen
  drawscreen
+ status_temp = 0
  asm
    lda $7FF0
-   bpl .keep_waiting
+   cmp #$80
+    beq .do_handover
+    bcc .keep_waiting
+    lda #1
+    sta status_temp
+    jmp .keep_waiting
 
+ .do_handover
    ; Copy 6-byte handover stub to Zero-Page RAM ($80-$85)
    ldx #0
 .copy_handover_stub
@@ -169,4 +176,5 @@ wait_loop
 
 .keep_waiting
 end
+ if status_temp = 1 then goto main_loop
  goto wait_loop

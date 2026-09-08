@@ -322,13 +322,24 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     wire [7:0] chunk_rdata [0:23];
     wire [7:0] menu_data_out;
+    wire [7:0] menu_data_from_chunks;
+    wire [7:0] menu_data_from_block;
     wire [4:0] cart_wr_chunk_sel = sideband_cart_ram_addr[15:11];
     wire [10:0] cart_wr_addr = sideband_cart_ram_addr[10:0];
 
-    cart_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd0)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
-    cart_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd1)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
-    cart_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd2)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
-    cart_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd3)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+    generate
+        if (H5_SIDEBAND_EN) begin : gen_sideband_menu_overlay_init
+            cart_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd0)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd1)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd2)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd3)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+        end else begin : gen_default_game_init_low
+            cart_block_2k #(.INIT_FILE("rom_chunk_00.hex")) u_rom_00 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[0]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd0)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("rom_chunk_01.hex")) u_rom_01 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[1]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd1)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("rom_chunk_02.hex")) u_rom_02 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[2]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd2)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+            cart_block_2k #(.INIT_FILE("rom_chunk_03.hex")) u_rom_03 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[3]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd3)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
+        end
+    endgenerate
     cart_block_2k #(.INIT_FILE("rom_chunk_04.hex")) u_rom_04 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[4]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd4)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
     cart_block_2k #(.INIT_FILE("rom_chunk_05.hex")) u_rom_05 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[5]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd5)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
     cart_block_2k #(.INIT_FILE("rom_chunk_06.hex")) u_rom_06 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[6]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd6)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
@@ -350,11 +361,22 @@ module atari_cart_top #(
     cart_block_2k #(.INIT_FILE("rom_chunk_22.hex")) u_rom_22 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[22]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd22)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
     cart_block_2k #(.INIT_FILE("rom_chunk_23.hex")) u_rom_23 (.clk(clk), .raddr(phys_rom_addr[10:0]), .rdata(chunk_rdata[23]), .we(sideband_cart_ram_we && (cart_wr_chunk_sel == 5'd23)), .waddr(cart_wr_addr), .wdata(sideband_cart_ram_wdata));
 
-    menu_block_8k #(.INIT_FILE("menu_word_chunk_00.hex")) u_menu_rom (
-        .clk(clk),
-        .raddr(a_sync[12:0]),
-        .rdata(menu_data_out)
-    );
+    wire [1:0] menu_chunk_sel = a_sync[12:11];
+    assign menu_data_from_chunks = chunk_rdata[menu_chunk_sel];
+
+    generate
+        if (H5_SIDEBAND_EN) begin : gen_menu_from_chunks
+            assign menu_data_out = menu_data_from_chunks;
+        end else begin : gen_menu_from_block
+            menu_block_8k #(.INIT_FILE("menu_word_chunk_00.hex")) u_menu_rom (
+                .clk(clk),
+                .raddr(a_sync[12:0]),
+                .rdata(menu_data_from_block)
+            );
+            assign menu_data_out = menu_data_from_block;
+        end
+    endgenerate
+
     wire [4:0] rom_chunk_sel = phys_rom_addr[15:11];
     wire [7:0] rom_data_out = (rom_chunk_sel < 5'd24) ? chunk_rdata[rom_chunk_sel] : 8'hFF;
 
@@ -460,7 +482,8 @@ module atari_cart_top #(
                     game_ready     <= 1'b0;
                     post_ack_pending <= 1'b0;
                     post_ack_delay <= 16'd0;
-                end else if (d_in_sync[7]) begin
+                end else if (d_in_sync[7] && (d_in_sync[6:3] == 4'b0001)) begin
+                    // Arm handover only for slot load commands 0x88..0x8F.
                     switch_pending <= 1'b1;
                     switch_delay   <= 16'd0;
                     game_ready     <= 1'b0;

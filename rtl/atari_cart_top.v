@@ -7,7 +7,8 @@
 `default_nettype none
 
 module atari_cart_top #(
-    parameter FW_INIT_FILE = "firmware.hex"
+    parameter FW_INIT_FILE = "firmware.hex",
+    parameter H5_SIDEBAND_EN = 1'b0
 )(
     // System Clock & Resets
     input  wire        clk,          // 27 MHz onboard clock
@@ -138,45 +139,65 @@ module atari_cart_top #(
     assign pokey_enable = game_mode;
 
     // ------------------------------------------------------------------------
-    // Sideband Hazard5 service plane (status/trigger/SD only)
-    // Keep ROM/menu read datapath unchanged while enabling SD + firmware path.
+    // Sideband service plane routing
+    // Default keeps fixed-cart behavior buildable on 9K.
+    // Enable H5_SIDEBAND_EN=1 for targeted Hazard5 sideband experiments.
     // ------------------------------------------------------------------------
-    wire        h5_sd_cs;
-    wire        h5_sd_mosi;
-    wire        h5_sd_clk;
-    wire [7:0]  h5_status_val;
+    wire       sideband_sd_cs;
+    wire       sideband_sd_mosi;
+    wire       sideband_sd_clk;
+    wire [7:0] sideband_status_val;
 
-    /* verilator lint_off UNUSEDSIGNAL */
-    wire        h5_pokey_enable;
-    wire [1:0]  h5_pokey_addr_sel;
-    wire [3:0]  h5_mapper_type;
-    wire        h5_cart_ram_we;
-    wire [15:0] h5_cart_ram_addr;
-    wire [7:0]  h5_cart_ram_wdata;
-    /* verilator lint_on UNUSEDSIGNAL */
+    generate
+        if (H5_SIDEBAND_EN) begin : gen_h5_sideband
+            wire        h5_sd_cs;
+            wire        h5_sd_mosi;
+            wire        h5_sd_clk;
+            wire [7:0]  h5_status_val;
 
-    hazard5_soc #(
-        .FIRMWARE_HEX(FW_INIT_FILE)
-    ) u_h5_soc (
-        .clk           (clk),
-        .rst_n         (core_rst_n),
-        .pokey_enable  (h5_pokey_enable),
-        .pokey_addr_sel(h5_pokey_addr_sel),
-        .mapper_type   (h5_mapper_type),
-        .trigger_val   (trigger_val_sideband),
-        .status_val    (h5_status_val),
-        .cart_ram_we   (h5_cart_ram_we),
-        .cart_ram_addr (h5_cart_ram_addr),
-        .cart_ram_wdata(h5_cart_ram_wdata),
-        .sd_cs         (h5_sd_cs),
-        .sd_mosi       (h5_sd_mosi),
-        .sd_miso       (sd_miso),
-        .sd_clk        (h5_sd_clk)
-    );
+            /* verilator lint_off UNUSEDSIGNAL */
+            wire        h5_pokey_enable;
+            wire [1:0]  h5_pokey_addr_sel;
+            wire [3:0]  h5_mapper_type;
+            wire        h5_cart_ram_we;
+            wire [15:0] h5_cart_ram_addr;
+            wire [7:0]  h5_cart_ram_wdata;
+            /* verilator lint_on UNUSEDSIGNAL */
 
-    assign sd_cs   = h5_sd_cs;
-    assign sd_mosi = h5_sd_mosi;
-    assign sd_clk  = h5_sd_clk;
+            hazard5_soc #(
+                .FIRMWARE_HEX(FW_INIT_FILE)
+            ) u_h5_soc (
+                .clk           (clk),
+                .rst_n         (core_rst_n),
+                .pokey_enable  (h5_pokey_enable),
+                .pokey_addr_sel(h5_pokey_addr_sel),
+                .mapper_type   (h5_mapper_type),
+                .trigger_val   (trigger_val_sideband),
+                .status_val    (h5_status_val),
+                .cart_ram_we   (h5_cart_ram_we),
+                .cart_ram_addr (h5_cart_ram_addr),
+                .cart_ram_wdata(h5_cart_ram_wdata),
+                .sd_cs         (h5_sd_cs),
+                .sd_mosi       (h5_sd_mosi),
+                .sd_miso       (sd_miso),
+                .sd_clk        (h5_sd_clk)
+            );
+
+            assign sideband_sd_cs      = h5_sd_cs;
+            assign sideband_sd_mosi    = h5_sd_mosi;
+            assign sideband_sd_clk     = h5_sd_clk;
+            assign sideband_status_val = h5_status_val;
+        end else begin : gen_no_h5_sideband
+            assign sideband_sd_cs      = 1'b1;
+            assign sideband_sd_mosi    = 1'b0;
+            assign sideband_sd_clk     = 1'b0;
+            assign sideband_status_val = game_ready ? 8'h80 : 8'h00;
+        end
+    endgenerate
+
+    assign sd_cs   = sideband_sd_cs;
+    assign sd_mosi = sideband_sd_mosi;
+    assign sd_clk  = sideband_sd_clk;
 
     // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
@@ -293,7 +314,7 @@ module atari_cart_top #(
 
     // FPGA Internal Data Bus Drive Logic
     wire drive_pokey = pokey_enable && is_pokey_addr && rw_is_read;
-    wire [7:0] status_data_out = h5_status_val;
+    wire [7:0] status_data_out = sideband_status_val;
     wire [7:0] menu_bus_data_out = is_status_addr ? status_data_out :
                                    (is_menu_addr ? menu_data_out : 8'hFF);
     wire [7:0] bus_data_out = game_mode ? (drive_pokey ? pokey_dout : rom_data_out)

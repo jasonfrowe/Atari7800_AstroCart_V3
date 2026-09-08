@@ -1,7 +1,7 @@
 # Gowin IP Usage Map (Tang 9K)
 
 ## Current Status
-This repository now uses a custom Gowin primitive wrapper for firmware RAM and includes generated Gowin IP files in synthesis inputs for visibility.
+This repository now uses a custom Gowin primitive wrapper for firmware RAM, includes generated Gowin IP files in synthesis inputs, and instantiates a sideband Hazard5 path for trigger/status/SD routing.
 
 ## What Contributes Today
 1. Firmware RAM path:
@@ -13,6 +13,16 @@ This repository now uses a custom Gowin primitive wrapper for firmware RAM and i
    - Source: rtl/rom_block_2k.v
    - Use: inferred 2K x 8 ROM blocks loaded by INIT_FILE.
    - Reason: generated pROM core as configured does not consume per-instance INIT_FILE for chunked ROM payloads.
+
+3. Sideband service-plane path:
+   - Source: rtl/atari_cart_top.v + rtl/hazard5_soc.v
+   - Use: Hazard5 instantiation routes trigger/status and SD pins only.
+   - Constraint: no ROM read-mux or mapper datapath changes in this stage.
+
+4. Mailbox RAM plumbing:
+   - Source: rtl/gowin_sdpb_mailbox.v
+   - Use: 256 x 8 mailbox region mapped in hazard5_soc (0xD000_0000..0xD000_00FF).
+   - Note: intended for staged metadata exchange; functional usage depends on firmware access.
 
 ## What Is Included But Not Yet Functionally Used
 1. rtl/ip/gowin/gowin_prom/gowin_prom.v

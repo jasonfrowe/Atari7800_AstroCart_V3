@@ -129,6 +129,7 @@ module atari_cart_top #(
     reg        post_ack_pending;
     reg [15:0] post_ack_delay;
     reg        trig_wr_prev;
+    reg [7:0]  trigger_val_sideband;
 
     localparam [15:0] POST_ACK_DELAY = 16'd120;
 
@@ -136,10 +137,46 @@ module atari_cart_top #(
 
     assign pokey_enable = game_mode;
 
-    // SD interface is unused in fixed-cart mode.
-    assign sd_cs   = 1'b1;
-    assign sd_mosi = 1'b0;
-    assign sd_clk  = 1'b0;
+    // ------------------------------------------------------------------------
+    // Sideband Hazard5 service plane (status/trigger/SD only)
+    // Keep ROM/menu read datapath unchanged while enabling SD + firmware path.
+    // ------------------------------------------------------------------------
+    wire        h5_sd_cs;
+    wire        h5_sd_mosi;
+    wire        h5_sd_clk;
+    wire [7:0]  h5_status_val;
+
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire        h5_pokey_enable;
+    wire [1:0]  h5_pokey_addr_sel;
+    wire [3:0]  h5_mapper_type;
+    wire        h5_cart_ram_we;
+    wire [15:0] h5_cart_ram_addr;
+    wire [7:0]  h5_cart_ram_wdata;
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    hazard5_soc #(
+        .FIRMWARE_HEX(FW_INIT_FILE)
+    ) u_h5_soc (
+        .clk           (clk),
+        .rst_n         (core_rst_n),
+        .pokey_enable  (h5_pokey_enable),
+        .pokey_addr_sel(h5_pokey_addr_sel),
+        .mapper_type   (h5_mapper_type),
+        .trigger_val   (trigger_val_sideband),
+        .status_val    (h5_status_val),
+        .cart_ram_we   (h5_cart_ram_we),
+        .cart_ram_addr (h5_cart_ram_addr),
+        .cart_ram_wdata(h5_cart_ram_wdata),
+        .sd_cs         (h5_sd_cs),
+        .sd_mosi       (h5_sd_mosi),
+        .sd_miso       (sd_miso),
+        .sd_clk        (h5_sd_clk)
+    );
+
+    assign sd_cs   = h5_sd_cs;
+    assign sd_mosi = h5_sd_mosi;
+    assign sd_clk  = h5_sd_clk;
 
     // ------------------------------------------------------------------------
     // Address Decoding & Memory Mapping
@@ -256,7 +293,7 @@ module atari_cart_top #(
 
     // FPGA Internal Data Bus Drive Logic
     wire drive_pokey = pokey_enable && is_pokey_addr && rw_is_read;
-    wire [7:0] status_data_out = game_ready ? 8'h80 : 8'h00;
+    wire [7:0] status_data_out = h5_status_val;
     wire [7:0] menu_bus_data_out = is_status_addr ? status_data_out :
                                    (is_menu_addr ? menu_data_out : 8'hFF);
     wire [7:0] bus_data_out = game_mode ? (drive_pokey ? pokey_dout : rom_data_out)
@@ -275,8 +312,12 @@ module atari_cart_top #(
             post_ack_pending <= 1'b0;
             post_ack_delay <= 16'd0;
             trig_wr_prev   <= 1'b0;
+            trigger_val_sideband <= 8'h00;
         end else begin
             trig_wr_prev <= is_trigger_write;
+
+            if (is_trigger_write && !trig_wr_prev)
+                trigger_val_sideband <= d_in_sync;
 
             if (post_ack_pending) begin
                 if (post_ack_delay >= POST_ACK_DELAY) begin

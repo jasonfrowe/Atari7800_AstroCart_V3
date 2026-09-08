@@ -16,6 +16,7 @@ V_SRC     = $(RTL_DIR)/atari_cart_top.v \
             $(RTL_DIR)/pokey_synth.v \
             $(RTL_DIR)/audio_pwm.v \
             $(RTL_DIR)/spi_sd.v \
+			$(RTL_DIR)/gowin_sp_be32.v \
             $(RTL_DIR)/hazard5_soc.v \
             $(RTL_DIR)/mapper_supergame.v \
             $(RTL_DIR)/hazard5/hdl/hazard5_cpu_1port.v \

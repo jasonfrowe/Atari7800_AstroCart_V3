@@ -9,6 +9,7 @@
 #   ./build.sh --trace-boot FILE  - Replays an external Atari boot trace with boot assertions enabled
 #   ./build.sh --trace-menu FILE  - Replays an external Atari bus trace against the prototype menu ROM
 #   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
+#   ./build.sh --gowin-ip-report  - Shows whether Gowin/RTL IP modules were used in latest synthesis log
 #   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
 # ============================================================================
 
@@ -102,6 +103,63 @@ run_menu_trace_replay() {
     echo -e "${GREEN}✓ Menu Trace Replay Passed Cleanly!${NC}"
 }
 
+report_gowin_ip_usage() {
+    local log_path=""
+    local prj_path=""
+    local cand
+    local log_candidates=(
+        "$GOWIN_IDE/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+        "$GOWIN_IDE/bin/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+        "$PROJECT_DIR/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+    )
+
+    local prj_candidates=(
+        "$GOWIN_IDE/impl/gwsynthesis/Atari7800_AstroCart_V3.prj"
+        "$GOWIN_IDE/bin/impl/gwsynthesis/Atari7800_AstroCart_V3.prj"
+        "$PROJECT_DIR/impl/gwsynthesis/Atari7800_AstroCart_V3.prj"
+    )
+
+    echo -e "\n${YELLOW}[Info] Gowin IP Usage Report (latest synthesis log)${NC}"
+
+    for cand in "${log_candidates[@]}"; do
+        if [ -f "$cand" ]; then
+            log_path="$cand"
+            break
+        fi
+    done
+
+    for cand in "${prj_candidates[@]}"; do
+        if [ -f "$cand" ]; then
+            prj_path="$cand"
+            break
+        fi
+    done
+
+    if [ -z "$log_path" ]; then
+        echo -e "${RED}No synthesis log found in expected locations:${NC}"
+        printf '  - %s\n' "${log_candidates[@]}"
+        echo "Run ./build.sh --gowin first, then rerun --gowin-ip-report."
+        exit 1
+    fi
+
+    echo "Log: $log_path"
+    if [ -f "$prj_path" ]; then
+        echo "Project list: $prj_path"
+    fi
+
+    echo
+    echo "[1] Analyzed source files of interest"
+    rg -n "Analyzing Verilog file '.*/(rtl/gowin_sp_be32\.v|rtl/ip/gowin/.*/.*\.v|rtl/rom_block_2k\.v|rtl/hazard5_soc\.v)'" "$log_path" || true
+
+    echo
+    echo "[2] Module compile/use markers"
+    rg -n "Compiling module 'rom_block_2k|Compiling module 'hazard5_soc|Compiling module 'gowin_sp_be32|Gowin_pROM|Gowin_SP|Gowin_SDPB|Extracting RAM for identifier 'mem'" "$log_path" || true
+
+    echo
+    echo "[3] Sweep warnings for memory blocks"
+    rg -n "NL0002.*rom_block_2k|NL0002.*Gowin_" "$log_path" || true
+}
+
 # Function: Run Gowin EDA Synthesis & Bitstream Generation
 run_gowin_synthesis() {
     echo -e "\n${YELLOW}[Phase 5] Running Gowin EDA Synthesis & PnR...${NC}"
@@ -142,6 +200,10 @@ add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
 add_file -type verilog "$PROJECT_DIR/rtl/spi_sd.v"
+add_file -type verilog "$PROJECT_DIR/rtl/gowin_sp_be32.v"
+add_file -type verilog "$PROJECT_DIR/rtl/ip/gowin/gowin_prom/gowin_prom.v"
+add_file -type verilog "$PROJECT_DIR/rtl/ip/gowin/gowin_sp/gowin_sp.v"
+add_file -type verilog "$PROJECT_DIR/rtl/ip/gowin/gowin_sdpb/gowin_sdpb.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5_soc.v"
 add_file -type verilog "$PROJECT_DIR/rtl/mapper_supergame.v"
 add_file -type verilog "$PROJECT_DIR/rtl/hazard5/hdl/hazard5_cpu_1port.v"
@@ -216,13 +278,16 @@ case "$MODE" in
     --gowin)
         run_gowin_synthesis
         ;;
+    --gowin-ip-report)
+        report_gowin_ip_usage
+        ;;
     --all)
         run_simulation
         run_gowin_synthesis
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-ip-report | --all]"
         exit 1
         ;;
 esac

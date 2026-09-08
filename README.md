@@ -102,6 +102,10 @@ Connect your Tang Nano 9K via USB-C to your Mac, then run:
 
 The current firmware exposes staged status codes through `CART_CSR_STATUS` to make SD bring-up debuggable on real hardware.
 
+Detailed integration plan (synthesis-safe):
+
+`docs/SD_FAT_ARCHITECTURE_PLAN.md`
+
 ### SD Init Failure Codes
 
 - `0xF0`: CMD0 did not return Idle (`R1=0x01` expected)

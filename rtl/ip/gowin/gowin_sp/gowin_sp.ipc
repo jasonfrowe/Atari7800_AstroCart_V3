@@ -1,0 +1,16 @@
+[General]
+file=gowin_sp
+ipc_version=4
+module=Gowin_SP
+target_device=gw1nr9c-004
+type=ram_sp
+version=3.0
+
+[Config]
+BYTE_SIZE=0
+DEPTH=2048
+LANG=0
+READ=1
+RESET_MODE=true
+WIDTH=32
+WRITE=0

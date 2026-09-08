@@ -87,30 +87,25 @@ module hazard5_soc #(
     // ------------------------------------------------------------------------
     // 8 KB Firmware Memory (Block RAM)
     // ------------------------------------------------------------------------
-    reg [31:0] fw_ram [0:2047];
-    reg [31:0] fw_ram_rdata;
-
-    initial begin
-        if (FIRMWARE_HEX != "") begin
-            $readmemh(FIRMWARE_HEX, fw_ram);
-            $display("[SOC_INIT] Loaded FW RAM: word 0 = 0x%08h", fw_ram[0]);
-        end
-    end
+    wire [31:0] fw_ram_rdata;
 
     wire fw_we = is_fw_ram && ahb_transfer && cpu_hwrite;
     wire [3:0] fw_wstrb = (cpu_hsize == 2'b10) ? 4'b1111 :
                           (cpu_hsize == 2'b01) ? (cpu_haddr[1] ? 4'b1100 : 4'b0011) :
                           (4'b0001 << cpu_haddr[1:0]);
 
-    always @(posedge clk) begin
-        if (fw_we) begin
-            if (fw_wstrb[0]) fw_ram[cpu_haddr[12:2]][ 7: 0] <= cpu_hwdata[ 7: 0];
-            if (fw_wstrb[1]) fw_ram[cpu_haddr[12:2]][15: 8] <= cpu_hwdata[15: 8];
-            if (fw_wstrb[2]) fw_ram[cpu_haddr[12:2]][23:16] <= cpu_hwdata[23:16];
-            if (fw_wstrb[3]) fw_ram[cpu_haddr[12:2]][31:24] <= cpu_hwdata[31:24];
-        end
-        fw_ram_rdata <= fw_ram[cpu_haddr[12:2]];
-    end
+    gowin_sp_be32 #(
+        .INIT_FILE(FIRMWARE_HEX)
+    ) u_fw_ram (
+        .clk   (clk),
+        .ce    (1'b1),
+        .oce   (1'b1),
+        .reset (~rst_n),
+        .ad    (cpu_haddr[12:2]),
+        .din   (cpu_hwdata),
+        .wre   (fw_we ? fw_wstrb : 4'b0000),
+        .dout  (fw_ram_rdata)
+    );
 
     // ------------------------------------------------------------------------
     // SPI MicroSD Controller Integration

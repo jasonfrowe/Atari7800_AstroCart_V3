@@ -47,6 +47,19 @@ Elaboration probe mode:
 
 This uses a dedicated top wrapper that forces H5 sideband on for reproducible synthesis experiments.
 
+Full matrix probe mode:
+
+./build.sh --gowin-h5-matrix
+
+This sweeps all 8 sideband combinations for:
+1. FW RAM enable
+2. Mailbox enable
+3. SPI enable
+
+Matrix results are written to:
+
+impl/gwsynthesis/h5_sideband_matrix_report.txt
+
 Report interpretation:
 1. "Analyzing Verilog file" means source is present in the project.
 2. "Compiling module" means module was elaborated into active logic for that top build.

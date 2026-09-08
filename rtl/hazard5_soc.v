@@ -9,7 +9,10 @@
 module hazard5_soc #(
     parameter FIRMWARE_HEX = "firmware.hex",
     parameter CPU_EXT_C = 1,
-    parameter CPU_EXT_M = 1
+    parameter CPU_EXT_M = 1,
+    parameter ENABLE_FW_RAM = 1,
+    parameter ENABLE_MAILBOX = 1,
+    parameter ENABLE_SPI = 1
 )(
     input  wire        clk,            // System clock (27 MHz)
     input  wire        rst_n,          // Active low reset
@@ -80,11 +83,11 @@ module hazard5_soc #(
     // - 0xC000_0000 - 0xC000_000F: Cartridge CSRs
     // - 0xD000_0000 - 0xD000_00FF: Mailbox RAM (256 x 8)
     // ------------------------------------------------------------------------
-    wire is_fw_ram   = (cpu_haddr[31:28] == 4'h0);
-    wire is_spi_sd   = (cpu_haddr[31:28] == 4'h4);
+    wire is_fw_ram   = ENABLE_FW_RAM  && (cpu_haddr[31:28] == 4'h0);
+    wire is_spi_sd   = ENABLE_SPI     && (cpu_haddr[31:28] == 4'h4);
     wire is_cart_ram = (cpu_haddr[31:28] == 4'h8 || cpu_haddr[31:28] == 4'hF);
     wire is_csr      = (cpu_haddr[31:28] == 4'hC);
-    wire is_mailbox  = (cpu_haddr[31:28] == 4'hD);
+    wire is_mailbox  = ENABLE_MAILBOX && (cpu_haddr[31:28] == 4'hD);
 
     wire ahb_transfer = (cpu_htrans[1] == 1'b1); // HTRANS_NONSEQ or HTRANS_SEQ
 
@@ -105,28 +108,40 @@ module hazard5_soc #(
                                              cpu_hwdata[31:24];
     wire [7:0] mailbox_rdata;
 
-    gowin_sp_be32 #(
-        .INIT_FILE(FIRMWARE_HEX)
-    ) u_fw_ram (
-        .clk   (clk),
-        .ce    (1'b1),
-        .oce   (1'b1),
-        .reset (~rst_n),
-        .ad    (cpu_haddr[12:2]),
-        .din   (cpu_hwdata),
-        .wre   (fw_we ? fw_wstrb : 4'b0000),
-        .dout  (fw_ram_rdata)
-    );
+    generate
+        if (ENABLE_FW_RAM) begin : gen_fw_ram
+            gowin_sp_be32 #(
+                .INIT_FILE(FIRMWARE_HEX)
+            ) u_fw_ram (
+                .clk   (clk),
+                .ce    (1'b1),
+                .oce   (1'b1),
+                .reset (~rst_n),
+                .ad    (cpu_haddr[12:2]),
+                .din   (cpu_hwdata),
+                .wre   (fw_we ? fw_wstrb : 4'b0000),
+                .dout  (fw_ram_rdata)
+            );
+        end else begin : gen_no_fw_ram
+            assign fw_ram_rdata = 32'h0;
+        end
+    endgenerate
 
-    gowin_sdpb_mailbox u_mailbox_ram (
-        .clk     (clk),
-        .rst     (~rst_n),
-        .a_we    (mailbox_we),
-        .a_addr  (cpu_haddr[9:2]),
-        .a_wdata (mailbox_wdata),
-        .b_addr  (cpu_haddr[9:2]),
-        .b_rdata (mailbox_rdata)
-    );
+    generate
+        if (ENABLE_MAILBOX) begin : gen_mailbox_ram
+            gowin_sdpb_mailbox u_mailbox_ram (
+                .clk     (clk),
+                .rst     (~rst_n),
+                .a_we    (mailbox_we),
+                .a_addr  (cpu_haddr[9:2]),
+                .a_wdata (mailbox_wdata),
+                .b_addr  (cpu_haddr[9:2]),
+                .b_rdata (mailbox_rdata)
+            );
+        end else begin : gen_no_mailbox_ram
+            assign mailbox_rdata = 8'h00;
+        end
+    endgenerate
 
     // ------------------------------------------------------------------------
     // SPI MicroSD Controller Integration
@@ -186,20 +201,36 @@ module hazard5_soc #(
     end
 
     wire [7:0] spi_rdata;
+    wire spi_sd_cs;
+    wire spi_sd_mosi;
+    wire spi_sd_clk;
 
-    spi_sd u_spi (
-        .clk      (clk),
-        .rst_n    (rst_n),
-        .cs       (spi_write_phase || is_spi_sd_rphase || (is_spi_sd && ahb_transfer && !cpu_hwrite)),
-        .we       (spi_write_phase),
-        .addr     (spi_write_phase ? spi_write_addr : is_spi_sd_rphase ? spi_raddr_reg : cpu_haddr[3:2]),
-        .wdata    (cpu_hwdata[7:0]),
-        .rdata    (spi_rdata),
-        .sd_cs    (sd_cs),
-        .sd_mosi  (sd_mosi),
-        .sd_miso  (sd_miso),
-        .sd_clk   (sd_clk)
-    );
+    generate
+        if (ENABLE_SPI) begin : gen_spi_sd
+            spi_sd u_spi (
+                .clk      (clk),
+                .rst_n    (rst_n),
+                .cs       (spi_write_phase || is_spi_sd_rphase || (is_spi_sd && ahb_transfer && !cpu_hwrite)),
+                .we       (spi_write_phase),
+                .addr     (spi_write_phase ? spi_write_addr : is_spi_sd_rphase ? spi_raddr_reg : cpu_haddr[3:2]),
+                .wdata    (cpu_hwdata[7:0]),
+                .rdata    (spi_rdata),
+                .sd_cs    (spi_sd_cs),
+                .sd_mosi  (spi_sd_mosi),
+                .sd_miso  (sd_miso),
+                .sd_clk   (spi_sd_clk)
+            );
+        end else begin : gen_no_spi_sd
+            assign spi_rdata = 8'h00;
+            assign spi_sd_cs = 1'b1;
+            assign spi_sd_mosi = 1'b0;
+            assign spi_sd_clk = 1'b0;
+        end
+    endgenerate
+
+    assign sd_cs = spi_sd_cs;
+    assign sd_mosi = spi_sd_mosi;
+    assign sd_clk = spi_sd_clk;
 
     // ------------------------------------------------------------------------
     // Cartridge RAM Write Output Logic

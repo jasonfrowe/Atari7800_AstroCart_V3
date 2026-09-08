@@ -10,6 +10,7 @@
 #   ./build.sh --trace-menu FILE  - Replays an external Atari bus trace against the prototype menu ROM
 #   ./build.sh --gowin            - Synthesizes FPGA design with Gowin EDA tools
 #   ./build.sh --gowin-h5-sideband - Synthesizes with Hazard5 sideband top wrapper enabled
+#   ./build.sh --gowin-h5-matrix  - Runs full H5 sideband matrix (FW RAM / Mailbox / SPI)
 #   ./build.sh --gowin-ip-report  - Shows whether Gowin/RTL IP modules were used in latest synthesis log
 #   ./build.sh --all              - Runs full simulation and Gowin FPGA synthesis
 # ============================================================================
@@ -193,20 +194,108 @@ report_gowin_ip_usage() {
     rg -n "NL0002.*rom_block_2k|NL0002.*Gowin_" "$log_path" || true
 }
 
+emit_h5_matrix_wrapper() {
+    local fw_en="$1"
+    local mailbox_en="$2"
+    local spi_en="$3"
+    local wrapper_path="$PROJECT_DIR/rtl/atari_cart_top_h5_matrix.v"
+
+    cat > "$wrapper_path" << EOF
+// ============================================================================
+// Module: atari_cart_top_h5_matrix
+// Description: Auto-generated top wrapper for Hazard5 sideband matrix sweeps.
+// ============================================================================
+
+\`default_nettype none
+
+module atari_cart_top_h5_matrix #(
+    parameter FW_INIT_FILE = "firmware.hex"
+)(
+    input  wire        clk,
+    input  wire        phi2,
+    input  wire        rw,
+    input  wire [15:0] a,
+    inout  wire [7:0]  d,
+    input  wire        halt,
+    output wire        irq,
+    output wire        buf_dir,
+    output wire        buf_oe,
+    output wire        audio,
+    output wire        sd_cs,
+    output wire        sd_mosi,
+    input  wire        sd_miso,
+    output wire        sd_clk,
+    output wire [5:0]  led
+);
+
+    atari_cart_top #(
+        .FW_INIT_FILE(FW_INIT_FILE),
+        .H5_SIDEBAND_EN(1'b1),
+        .H5_FW_RAM_EN(1'b${fw_en}),
+        .H5_MAILBOX_EN(1'b${mailbox_en}),
+        .H5_SPI_EN(1'b${spi_en})
+    ) u_top (
+        .clk    (clk),
+        .phi2   (phi2),
+        .rw     (rw),
+        .a      (a),
+        .d      (d),
+        .halt   (halt),
+        .irq    (irq),
+        .buf_dir(buf_dir),
+        .buf_oe (buf_oe),
+        .audio  (audio),
+        .sd_cs  (sd_cs),
+        .sd_mosi(sd_mosi),
+        .sd_miso(sd_miso),
+        .sd_clk (sd_clk),
+        .led    (led)
+    );
+
+endmodule
+
+\`default_nettype wire
+EOF
+}
+
+find_gowin_log_path() {
+    local cand
+    local log_candidates=(
+        "$GOWIN_IDE/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+        "$GOWIN_IDE/bin/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+        "$PROJECT_DIR/impl/gwsynthesis/Atari7800_AstroCart_V3.log"
+    )
+
+    for cand in "${log_candidates[@]}"; do
+        if [ -f "$cand" ]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # Function: Run Gowin EDA Synthesis & Bitstream Generation
 run_gowin_synthesis() {
     local top_module="${1:-atari_cart_top}"
+    local h5_fw_ram_en="${2:-1}"
+    local h5_mailbox_en="${3:-1}"
+    local h5_spi_en="${4:-1}"
 
     echo -e "\n${YELLOW}[Phase 5] Running Gowin EDA Synthesis & PnR...${NC}"
 
     if [ ! -d "$GOWIN_IDE" ]; then
         echo -e "${RED}Error: Gowin IDE not found at $GOWIN_IDE${NC}"
-        exit 1
+        return 1
     fi
 
     # Ensure memory hex files exist
     make -C sim rom_chunk_00.hex
     make -C firmware
+
+    # Keep matrix wrapper available for all synthesis modes.
+    emit_h5_matrix_wrapper "$h5_fw_ram_en" "$h5_mailbox_en" "$h5_spi_en"
 
     # Copy memory initialization files to all potential working directories
     mkdir -p impl/gwsynthesis "$GOWIN_IDE/impl/gwsynthesis" "$GOWIN_IDE/impl/pnr"
@@ -232,6 +321,7 @@ run_gowin_synthesis() {
 set_device GW1NR-LV9QN88PC6/I5 -name GW1NR-9C
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top.v"
 add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5.v"
+add_file -type verilog "$PROJECT_DIR/rtl/atari_cart_top_h5_matrix.v"
 add_file -type verilog "$PROJECT_DIR/rtl/rom_block_2k.v"
 add_file -type verilog "$PROJECT_DIR/rtl/pokey_synth.v"
 add_file -type verilog "$PROJECT_DIR/rtl/audio_pwm.v"
@@ -270,13 +360,16 @@ EOF
     export DYLD_FRAMEWORK_PATH="$IDE_LIB:$DYLD_FRAMEWORK_PATH"
 
     cd "$GOWIN_IDE"
-    ./gw_sh "$BUILD_TCL"
-    RESULT=$?
+    if ./gw_sh "$BUILD_TCL"; then
+        RESULT=0
+    else
+        RESULT=$?
+    fi
     cd "$PROJECT_DIR"
 
     if [ $RESULT -ne 0 ]; then
         echo -e "${RED}Gowin Synthesis failed with code $RESULT${NC}"
-        exit $RESULT
+        return $RESULT
     fi
 
     BITSTREAM_PATH="$GOWIN_IDE/impl/pnr/Atari7800_AstroCart_V3.fs"
@@ -292,8 +385,73 @@ EOF
         echo -e "${GREEN}✓ Bitstream copied to Atari7800_AstroCart_V3.fs${NC}"
     else
         echo -e "${RED}Error: Bitstream not found at $BITSTREAM_PATH${NC}"
-        exit 1
+        return 1
     fi
+
+    return 0
+}
+
+run_gowin_h5_matrix() {
+    local log_path=""
+    local matrix_report_path="$PROJECT_DIR/impl/gwsynthesis/h5_sideband_matrix_report.txt"
+    local bits
+    local fw_en
+    local mailbox_en
+    local spi_en
+    local label
+    local result
+    local reason
+    local -a combos=(
+        "000 CORE_ONLY"
+        "100 CORE_PLUS_FW"
+        "010 CORE_PLUS_MAILBOX"
+        "001 CORE_PLUS_SPI"
+        "110 CORE_PLUS_FW_MAILBOX"
+        "101 CORE_PLUS_FW_SPI"
+        "011 CORE_PLUS_MAILBOX_SPI"
+        "111 FULL_SIDEBAND"
+    )
+
+    echo -e "\n${YELLOW}[Matrix] Hazard5 sideband toggle sweep (FW/Mailbox/SPI)${NC}"
+    printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "CONFIG" "FW" "MB" "SPI" "RESULT" "NOTES"
+    printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "------------------" "---" "---" "---" "--------" "------------"
+
+    mkdir -p "$PROJECT_DIR/impl/gwsynthesis"
+    {
+        echo "Hazard5 sideband matrix report"
+        echo "Generated: $(date)"
+        printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "CONFIG" "FW" "MB" "SPI" "RESULT" "NOTES"
+        printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "------------------" "---" "---" "---" "--------" "------------"
+    } > "$matrix_report_path"
+
+    for combo in "${combos[@]}"; do
+        bits="${combo%% *}"
+        label="${combo#* }"
+        fw_en="${bits:0:1}"
+        mailbox_en="${bits:1:1}"
+        spi_en="${bits:2:1}"
+
+        if run_gowin_synthesis atari_cart_top_h5_matrix "$fw_en" "$mailbox_en" "$spi_en"; then
+            result="PASS"
+            reason="fit"
+        else
+            result="FAIL"
+            reason="unknown"
+        fi
+
+        log_path="$(find_gowin_log_path || true)"
+        if [ -n "$log_path" ] && rg -q "ERROR \(IF0008\)" "$log_path"; then
+            reason="IF0008"
+        elif [ "$result" = "FAIL" ] && [ -n "$log_path" ]; then
+            reason="other"
+        fi
+
+        printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "$label" "$fw_en" "$mailbox_en" "$spi_en" "$result" "$reason"
+        printf '%-18s %-3s %-3s %-3s %-8s %-12s\n' "$label" "$fw_en" "$mailbox_en" "$spi_en" "$result" "$reason" >> "$matrix_report_path"
+    done
+
+    echo
+    echo "Saved matrix report: $matrix_report_path"
 }
 
 case "$MODE" in
@@ -318,6 +476,9 @@ case "$MODE" in
     --gowin-h5-sideband)
         run_gowin_synthesis atari_cart_top_h5
         ;;
+    --gowin-h5-matrix)
+        run_gowin_h5_matrix
+        ;;
     --gowin-ip-report)
         report_gowin_ip_usage
         ;;
@@ -327,7 +488,7 @@ case "$MODE" in
         ;;
     *)
         echo -e "${RED}Unknown mode: $MODE${NC}"
-        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-h5-sideband | --gowin-ip-report | --all]"
+        echo "Usage: ./build.sh [--sim | --sim-menu | --trace FILE | --trace-boot FILE | --trace-menu FILE | --gowin | --gowin-h5-sideband | --gowin-h5-matrix | --gowin-ip-report | --all]"
         exit 1
         ;;
 esac

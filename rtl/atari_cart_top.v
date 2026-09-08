@@ -8,7 +8,10 @@
 
 module atari_cart_top #(
     parameter FW_INIT_FILE = "firmware.hex",
-    parameter H5_SIDEBAND_EN = 1'b0
+    parameter H5_SIDEBAND_EN = 1'b0,
+    parameter H5_FW_RAM_EN = 1'b1,
+    parameter H5_MAILBOX_EN = 1'b1,
+    parameter H5_SPI_EN = 1'b1
 )(
     // System Clock & Resets
     input  wire        clk,          // 27 MHz onboard clock
@@ -167,7 +170,10 @@ module atari_cart_top #(
             hazard5_soc #(
                 .FIRMWARE_HEX(FW_INIT_FILE),
                 .CPU_EXT_C(0),
-                .CPU_EXT_M(1)
+                .CPU_EXT_M(1),
+                .ENABLE_FW_RAM(H5_FW_RAM_EN),
+                .ENABLE_MAILBOX(H5_MAILBOX_EN),
+                .ENABLE_SPI(H5_SPI_EN)
             ) u_h5_soc (
                 .clk           (clk),
                 .rst_n         (core_rst_n),

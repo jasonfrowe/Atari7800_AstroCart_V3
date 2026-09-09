@@ -164,7 +164,13 @@ flash_loop
  ; at zero page $80-$91, colliding with 7800basic's own dlendsave kernel
  ; array). Using $2210+ instead avoids that collision.
  asm
-   lda #0
+   ; $7F (not $00) per 7800basic's own startup.asm/CTRL bit layout comment:
+   ; bits 6,5 are a 2-bit DMA-control field where only 2=normal DMA and
+   ; 3=no DMA are valid/documented, both requiring bit 6 set. Writing $00
+   ; clears bit 6 too, landing MARIA in an undefined state that isn't
+   ; either documented value -- some games' own init code tolerates this,
+   ; but it's not the correct "DMA off" value.
+   lda #$7F
    sta $3C                 ; disable MARIA DMA
 
    ldx #0

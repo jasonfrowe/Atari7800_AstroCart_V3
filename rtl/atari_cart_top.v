@@ -102,6 +102,32 @@ module atari_cart_top #(
     reg        warm_rst_n    = 1'b0;
 
     // ------------------------------------------------------------------------
+    // Reset synchronizer for the clk_cart domain: core_rst_n is generated
+    // entirely from `clk`-domain registers (rst_n's POR counter, warm_rst_n's
+    // watchdog). Using it directly as an async reset for clk_cart-domain
+    // flops (mapper_supergame, pokey_synth, audio_pwm, the mode-switch FSM
+    // below) is safe on ASSERT (forcing a known state is never a problem
+    // regardless of clock relationship) but not on DEASSERT: core_rst_n's
+    // release edge happens synchronously to `clk`, completely unrelated in
+    // phase to clk_cart, so different clk_cart-domain flops could sample
+    // that release on different cycles from each other if it lands near a
+    // clk_cart edge -- and because both clocks derive from the same
+    // crystal with a fixed, deterministic startup sequence, a bad
+    // relationship here would reproduce the SAME way on every power-up, not
+    // intermittently. Standard async-assert/sync-deassert pattern below.
+    // Sim cannot exercise this at all (Verilator ties clk_cart to the same
+    // edge as clk, so there is no skew to have a bug in).
+    // ------------------------------------------------------------------------
+    reg [1:0] core_rst_n_cart_sync = 2'b00;
+    always @(posedge clk_cart or negedge core_rst_n) begin
+        if (!core_rst_n)
+            core_rst_n_cart_sync <= 2'b00;
+        else
+            core_rst_n_cart_sync <= {core_rst_n_cart_sync[0], 1'b1};
+    end
+    wire core_rst_n_cart = core_rst_n_cart_sync[1];
+
+    // ------------------------------------------------------------------------
     // Noise-Filtered Synchronizers for Atari 7800 Signals -- on clk_cart, NOT
     // the raw 27MHz clk. This matches AstroCart V2's proven architecture
     // (top.v: "wire sys_clk = clk_81m" -- V2 synchronizes the Atari bus
@@ -363,7 +389,7 @@ module atari_cart_top #(
 
     mapper_supergame u_mapper (
         .clk            (clk_cart),
-        .rst_n          (core_rst_n),
+        .rst_n          (core_rst_n_cart),
         .phi2_high      (phi2_high),
         .phi2_rise      (phi2_rise),
         .cs             (is_cart_addr),
@@ -480,7 +506,7 @@ module atari_cart_top #(
 
     pokey_synth u_pokey (
         .clk        (clk_cart),
-        .rst_n      (core_rst_n),
+        .rst_n      (core_rst_n_cart),
         .phi2_rise  (phi2_rise),
         .cs         (pokey_enable && is_pokey_addr),
         .rw         (rw_is_read),
@@ -493,7 +519,7 @@ module atari_cart_top #(
     // Audio PWM Modulator on Pin 76 (T_EAUD)
     audio_pwm u_pwm (
         .clk        (clk_cart),
-        .rst_n      (core_rst_n),
+        .rst_n      (core_rst_n_cart),
         .level      (pcm_audio),
         .pwm_out    (audio)
     );
@@ -523,8 +549,8 @@ module atari_cart_top #(
     // clk_cart-domain signals; game_mode feeds bus_data_out's mux directly,
     // so it needs to stay in the same domain as the rest of that chain).
     // ------------------------------------------------------------------------
-    always @(posedge clk_cart or negedge core_rst_n) begin
-        if (!core_rst_n) begin
+    always @(posedge clk_cart or negedge core_rst_n_cart) begin
+        if (!core_rst_n_cart) begin
             game_mode            <= 1'b0;
             switch_pending       <= 1'b0;
             switch_delay         <= 16'd0;

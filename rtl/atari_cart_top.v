@@ -122,27 +122,17 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     reg [1:0] phi2_pipe;
     reg [2:0] rw_pipe;
+    reg [15:0] a_pipe;
     reg [15:0] a_sync;
     reg [7:0] d_in_sync;
     reg       phi2_clean;
 
-    // a_sync used to be a 2-stage "wait for 2 consecutive matching raw
-    // samples" glitch filter (a_pipe<=a; if(a_pipe==a) a_sync<=a_pipe;),
-    // which cost 1-2 full clk periods (~37-74ns, ~55ns average) on EVERY
-    // address change, not just when a real bounce happened -- the second
-    // stage always has to wait one more cycle to confirm stability even
-    // when the value was already clean. That's a real, structural tax
-    // against MARIA's ~140ns DMA budget. Simplified to plain single-stage
-    // registration, matching d_in_sync just below (the data bus has always
-    // been treated this way in this file, no glitch filter) -- the level
-    // shifters (SN74LVC8T245) are a tightly-matched octal buffer, so real
-    // inter-bit skew should be well within a single 37ns clk period. If
-    // this turns out to be wrong (occasional torn-address reads reappear),
-    // the 2-stage filter above is the fallback to restore.
     always @(posedge clk) begin
         phi2_pipe <= {phi2_pipe[0], phi2};
         rw_pipe   <= {rw_pipe[1:0], rw};
-        a_sync    <= a;
+        a_pipe    <= a;
+        if (a_pipe == a)
+            a_sync <= a;
         d_in_sync <= d;
 
         // Use a fast synchronized PHI2 view; longer majority filtering proved too slow

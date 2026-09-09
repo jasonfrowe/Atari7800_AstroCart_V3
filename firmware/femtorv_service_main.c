@@ -28,7 +28,12 @@
 #define A78_OFF_CART_TYPE 53u
 #define A78_OFF_TITLE    17u
 #define A78_OFF_V4_MAPPER 64u
-#define A78_OFF_V4_AUDIO 66u
+// The v4+ "audio" field is a 2-byte field at offsets 66-67 per the A78
+// header spec (https://7800.8bitdev.org/index.php/A78_Header_Specification),
+// with the actual bit-encoded value (bits 0-2 = POKEY location, bit3=YM2151,
+// bit4=COVOX, bit5=ADPCM) in the second byte. Confirmed against astrowing.a78
+// (which uses POKEY @ $0450): offset 66 = 0x00, offset 67 = 0x02.
+#define A78_OFF_V4_AUDIO 67u
 
 #define CART_FLAG_POKEY_4000   (1u << 0)
 #define CART_FLAG_SUPERGAME    (1u << 1)
@@ -501,25 +506,27 @@ static void load_game(uint8_t slot) {
 
     loader_set_stage(0x20u);
 
-    // Default to always loading astrowing.a78 from SDCard: use the path the
-    // scan already proved works (g_astro_slot), rather than guessing an 8.3
-    // short name -- the FAT alias macOS assigns (e.g. "ASTRO~22.A78") is not
-    // the simple "~1" DOS convention and shifts whenever the card's file
-    // listing changes, including its hidden "._" AppleDouble sidecar files.
-    if (g_astro_slot != 0xFFu && g_slot_paths[g_astro_slot][0] != 0) {
-        fr = pf_open(g_slot_paths[g_astro_slot]);
+    // Load whichever game the menu cursor was actually on: the scan already
+    // discovered and recorded each slot's real SD-card path (short name and
+    // all -- we never guess an 8.3 alias, since macOS's FAT alias scheme,
+    // e.g. "ASTRO~22.A78", doesn't follow the simple DOS "~1" convention and
+    // shifts whenever the card's file listing changes).
+    if (slot < MENU_SLOT_COUNT && g_slot_paths[slot][0] != 0) {
+        fr = pf_open(g_slot_paths[slot]);
     }
 
     // If that didn't open, ensure filesystem is mounted and retry
-    if (fr != FR_OK && g_astro_slot != 0xFFu && g_slot_paths[g_astro_slot][0] != 0) {
+    if (fr != FR_OK && slot < MENU_SLOT_COUNT && g_slot_paths[slot][0] != 0) {
         (void)disk_initialize();
         (void)pf_mount(&g_fs);
-        fr = pf_open(g_slot_paths[g_astro_slot]);
+        fr = pf_open(g_slot_paths[slot]);
     }
 
-    // If still not opened, try selected slot path if populated
-    if (fr != FR_OK && slot < MENU_SLOT_COUNT && g_slot_paths[slot][0] != 0) {
-        fr = pf_open(g_slot_paths[slot]);
+    // If still not opened, fall back to astrowing specifically if it was
+    // found (keeps the astrowing-only test path working even if the
+    // selected slot's file went missing between scan and load).
+    if (fr != FR_OK && g_astro_slot != 0xFFu && g_slot_paths[g_astro_slot][0] != 0) {
+        fr = pf_open(g_slot_paths[g_astro_slot]);
     }
 
     // If still not opened, try any slot path that was discovered
@@ -567,9 +574,13 @@ static void load_game(uint8_t slot) {
     if (rom_size == 0u || rom_size > 49152u) {
         rom_size = 49152u;
     }
-    if (profile.pokey_mode == POKEY_MODE_NONE) {
-        profile.pokey_mode = POKEY_MODE_0450;
-    }
+    // NOTE: no "default to $0450 POKEY" fallback here -- decode_v4_profile()/
+    // decode_legacy_profile() already correctly report POKEY_MODE_NONE for a
+    // cart whose header says it has no POKEY (e.g. Food Fight, Choplifter),
+    // and that must be respected: forcing POKEY on anyway would let it
+    // intercept reads/writes in the $0450 range that the game may use as
+    // ordinary RAM. Only the "couldn't find a valid A78 header at all" path
+    // above sets an explicit default, since there's no header to trust then.
 
     // Configure POKEY and Mapper in FPGA CSR
     uint8_t cfg = 0u;

@@ -132,7 +132,7 @@ module atari_cart_top #(
     wire phi2_high  = phi2_clean;
     wire phi2_rise  = (phi2_clean && !phi2_clean_prev);
     wire rw_is_read = rw_pipe[1];
-    wire core_rst_n = rst_n && warm_rst_n && cart_pll_lock;
+    wire core_rst_n = rst_n && warm_rst_n;
 
     always @(posedge clk) begin
         if (phi2_rise)
@@ -539,7 +539,13 @@ module atari_cart_top #(
     //            5 blinks = disk/mount/open/read error
     //            6 blinks = ready (0x80) -- waiting on the game_mode ack
     //            7 blinks = anything else / unexpected value
-    // led[0:3] are unused (off) in this layout.
+    // led[0] = u_pll_cart (clk_cart, ~81MHz cart ROM/RAM BRAM read clock)
+    //          lock status -- steady ON means locked. If this is OFF/dark,
+    //          the second PLL never locked; core_rst_n no longer depends on
+    //          it (see cart_pll_lock below) specifically so a failure here
+    //          is visible instead of silently holding the whole SoC in
+    //          reset forever, as it did before this LED was added.
+    // led[1:3] are unused (off) in this layout.
     // ------------------------------------------------------------------------
     reg [23:0] heartbeat_ctr = 24'd0;
     reg        heartbeat_led = 1'b0;
@@ -598,7 +604,8 @@ module atari_cart_top #(
         end
     end
 
-    assign led[3:0] = 4'b1111;
+    assign led[0]   = ~cart_pll_lock;
+    assign led[3:1] = 3'b111;
     assign led[4]   = ~heartbeat_led;
     assign led[5]   = ~blink_out;
 

@@ -102,7 +102,23 @@ module atari_cart_top #(
     reg        warm_rst_n    = 1'b0;
 
     // ------------------------------------------------------------------------
-    // Noise-Filtered Synchronizers for Atari 7800 Signals (27MHz System Clock)
+    // Noise-Filtered Synchronizers for Atari 7800 Signals -- on clk_cart, NOT
+    // the raw 27MHz clk. This matches AstroCart V2's proven architecture
+    // (top.v: "wire sys_clk = clk_81m" -- V2 synchronizes the Atari bus
+    // directly onto its one fast system clock, with NO separate slow
+    // domain for address decode at all). V3 originally synchronized onto
+    // `clk` (27MHz) while cart data was served from a different clock,
+    // which meant every cart read crossed clock domains -- fixable with a
+    // synchronizer for the *address*, but the mux select feeding bus_data_out
+    // (is_cart_addr/is_menu_addr/game_mode/drive_pokey, all ultimately from
+    // a_sync) stayed on `clk` while the *data* (rom_data_out) came from the
+    // now-synchronized, clk_cart-delayed chunk_rdata -- a real window after
+    // every address change where the mux selector and the data disagree
+    // about which address is current. That combinational-merge mismatch,
+    // not just synchronizer latency, is the likely source of the graphics
+    // corruption seen even after the address synchronizer fix. Moving the
+    // whole bus-facing chain onto clk_cart (like V2) removes the mismatch
+    // at the source instead of trying to paper over it downstream.
     // ------------------------------------------------------------------------
     reg [1:0] phi2_pipe;
     reg [2:0] rw_pipe;
@@ -111,7 +127,7 @@ module atari_cart_top #(
     reg [7:0] d_in_sync;
     reg       phi2_clean;
 
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         phi2_pipe <= {phi2_pipe[0], phi2};
         rw_pipe   <= {rw_pipe[1:0], rw};
         a_pipe    <= a;
@@ -125,7 +141,7 @@ module atari_cart_top #(
     end
 
     reg phi2_clean_prev;
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         phi2_clean_prev <= phi2_clean;
     end
 
@@ -346,7 +362,7 @@ module atari_cart_top #(
     wire [18:0] phys_rom_addr;
 
     mapper_supergame u_mapper (
-        .clk            (clk),
+        .clk            (clk_cart),
         .rst_n          (core_rst_n),
         .phi2_high      (phi2_high),
         .phi2_rise      (phi2_rise),
@@ -361,38 +377,41 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Cartridge Game RAM (48KB across 24 BSRAM blocks)
     // ------------------------------------------------------------------------
-    wire [15:0] game_ram_raddr = boot_busy ? {3'b000, boot_raddr} : phys_rom_addr[15:0];
-
+    // phys_rom_addr is now natively generated in the clk_cart domain
+    // (mapper_supergame runs on clk_cart, see above) -- no synchronizer
+    // needed for real gameplay reads any more, matching V2's single-clock
+    // architecture. The only remaining cross-domain signal here is
+    // boot_raddr, which comes from femtorv_service_soc's power-on DMA FSM
+    // in the svc_clk domain (a completely separate concern from the Atari
+    // bus, still needs its own sync). boot_busy is likewise synchronized
+    // since it's used as this mux's select.
     // ------------------------------------------------------------------------
-    // Address synchronizer: game_ram_raddr is registered in the `clk`
-    // (27MHz) domain (via mapper_supergame/a_sync) or the svc_clk-domain
-    // boot DMA FSM's boot_raddr, and crosses here into clk_cart -- a
-    // SEPARATE, independent PLL instance from both `clk` and svc_clk's own
-    // PLL. Despite all sharing the same 27MHz reference, two independent
-    // PLLs have no fixed, guaranteed phase relationship to each other, so
-    // this is a genuine asynchronous multi-bit bus crossing, not just "a
-    // faster settle clock" (that reasoning only ever applied to Port A's
-    // *output*, which really is safely combinational -- it never applied to
-    // this address *input*). A raw wire straight into the BRAMs' own
-    // address register has no stage to let a metastable capture resolve
-    // before it's used as the actual read address -- rare enough to be
-    // invisible on the menu's slow SD-paced title scan, but frequent enough
-    // during MARIA's DMA-heavy gameplay reads to corrupt cart data and
-    // crash almost immediately (see blue/yellow-screen crash on every game
-    // load, not just Choplifter, after clk_cart was introduced). Double-
-    // register the whole bus in clk_cart before any BRAM sees it, and use
-    // the synchronized rsel for the output mux too so the mux selector
-    // always stays paired with the address that was actually presented to
-    // the BRAMs.
-    // ------------------------------------------------------------------------
-    reg [15:0] game_ram_raddr_cart_r1, game_ram_raddr_cart_s;
+    reg [12:0] boot_raddr_cart_r1, boot_raddr_cart_s;
+    reg [1:0]  boot_busy_cart_sync;
     always @(posedge clk_cart) begin
-        game_ram_raddr_cart_r1 <= game_ram_raddr;
-        game_ram_raddr_cart_s  <= game_ram_raddr_cart_r1;
+        boot_raddr_cart_r1  <= boot_raddr;
+        boot_raddr_cart_s   <= boot_raddr_cart_r1;
+        boot_busy_cart_sync <= {boot_busy_cart_sync[0], boot_busy};
     end
 
-    wire [4:0]  game_chunk_rsel = game_ram_raddr_cart_s[15:11];
-    wire [10:0] game_chunk_roff = game_ram_raddr_cart_s[10:0];
+    wire [15:0] game_ram_raddr = boot_busy_cart_sync[1] ? {3'b000, boot_raddr_cart_s} : phys_rom_addr[15:0];
+
+    // Pipeline register: boot_busy_cart_sync -> this 16-bit mux -> BRAM
+    // address port was a single combinational chain long enough to be the
+    // worst timing path in the whole clk_cart domain (confirmed via
+    // ./build.sh --gowin's P&R report: ~16.9ns, over clk_cart's 12.3ns
+    // period, dragging clk_cart's whole achievable Fmax down to ~59MHz).
+    // Breaking it into two clk_cart-domain pipeline stages (ordinary
+    // same-clock register, not a CDC concern) fixes it -- the boot DMA
+    // wait margin in femtorv_service_soc.v already has comfortable slack
+    // for one more clk_cart cycle here.
+    reg [15:0] game_ram_raddr_r;
+    always @(posedge clk_cart) begin
+        game_ram_raddr_r <= game_ram_raddr;
+    end
+
+    wire [4:0]  game_chunk_rsel = game_ram_raddr_r[15:11];
+    wire [10:0] game_chunk_roff = game_ram_raddr_r[10:0];
 
     wire [15:0] eff_loader_cart_ram_addr = (loader_cart_ram_addr >= 16'hE000) ?
                                            (loader_cart_ram_addr - 16'h4000) :
@@ -460,7 +479,7 @@ module atari_cart_top #(
     wire [7:0] pcm_audio;
 
     pokey_synth u_pokey (
-        .clk        (clk),
+        .clk        (clk_cart),
         .rst_n      (core_rst_n),
         .phi2_rise  (phi2_rise),
         .cs         (pokey_enable && is_pokey_addr),
@@ -473,7 +492,7 @@ module atari_cart_top #(
 
     // Audio PWM Modulator on Pin 76 (T_EAUD)
     audio_pwm u_pwm (
-        .clk        (clk),
+        .clk        (clk_cart),
         .rst_n      (core_rst_n),
         .level      (pcm_audio),
         .pwm_out    (audio)
@@ -499,9 +518,12 @@ module atari_cart_top #(
     assign irq = 1'b0;
 
     // ------------------------------------------------------------------------
-    // Handover & Mode Switch State Machine
+    // Handover & Mode Switch State Machine -- moved onto clk_cart along with
+    // the bus synchronizers above (is_trigger_write/d_in_sync are now
+    // clk_cart-domain signals; game_mode feeds bus_data_out's mux directly,
+    // so it needs to stay in the same domain as the rest of that chain).
     // ------------------------------------------------------------------------
-    always @(posedge clk or negedge core_rst_n) begin
+    always @(posedge clk_cart or negedge core_rst_n) begin
         if (!core_rst_n) begin
             game_mode            <= 1'b0;
             switch_pending       <= 1'b0;

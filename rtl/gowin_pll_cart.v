@@ -1,7 +1,7 @@
 // ============================================================================
 // Module: gowin_pll_cart
 // Description: Second, independent PLL instance producing clk_cart
-//              (~81MHz), used only for the cart ROM/RAM BRAM read port
+//              (~108MHz), used only for the cart ROM/RAM BRAM read port
 //              (ram_block_2k Port A, MARIA/CPU reads) and its address
 //              synchronizer in atari_cart_top.v. Deliberately separate from
 //              gowin_pll.v (the femtorv_service_soc PLL, which stays at
@@ -12,24 +12,29 @@
 //              bus-synchronizer comment: two attempts to sample pins
 //              directly on clk_cart broke the menu on real hardware,
 //              likely a real signal-integrity/setup-time margin issue
-//              through the board's SN74LVC8T245 level shifters at ~81MHz,
-//              not a logic bug).
-//              Tried raising this to ~135MHz (FBDIV_SEL=4) to shrink the
-//              cart-read address-sync + BRAM-read latency for MARIA's DMA
-//              (see atari_cart_top.v's game_ram_raddr comment) -- but that
-//              broke SD-scanned menu titles entirely (previously just an
-//              occasional duplicate at 81MHz). ram_block_2k.v is a plain
-//              inferred dual-clock dual-port RAM with no explicit read-
-//              during-write behavior configured; the SD loader (writing on
-//              svc_clk) and the menu program (reading titles on clk_cart)
-//              can hit the same address close together, which is vendor-
-//              undefined for a true dual-clock BRAM. A faster clk_cart read
-//              rate means more read events per unit time, raising the odds
-//              of colliding with any given write -- consistent with rare
-//              corruption at 81MHz becoming total failure at 135MHz.
-//              Reverted to 81MHz until that BRAM collision risk is
-//              understood/fixed on its own; don't raise this again without
-//              addressing that first.
+//              through the board's SN74LVC8T245 level shifters, not a
+//              logic bug).
+//              81MHz confirmed working (titles load, MARIA graphics still
+//              corrupted -- the actual thing this rate needs to fix).
+//              135MHz (FBDIV_SEL=4) broke SD-scanned menu titles entirely,
+//              vs. just an occasional duplicate at 81MHz -- see
+//              atari_cart_top.v's game_ram_raddr comment and
+//              ram_block_2k.v: it's a plain inferred dual-clock dual-port
+//              RAM with no explicit read-during-write behavior configured,
+//              and the SD loader (svc_clk) writing the same region the
+//              menu is reading titles from (clk_cart) is a real, vendor-
+//              undefined same-address collision risk that gets WORSE as
+//              the read rate rises (more read events per unit time = more
+//              chances to collide with any given write). Stepping up to
+//              ~108MHz (FBDIV_SEL=3) instead of jumping straight back to
+//              135MHz, to find how far this can go before the title
+//              collision becomes unacceptable, while still meaningfully
+//              cutting the address-sync + BRAM-read latency for MARIA's
+//              7.16MHz DMA. If this ALSO breaks titles badly, the fix
+//              needs to actually address the BRAM collision (explicit
+//              defined read/write semantics, or a firmware-side handshake
+//              so the loader and the menu's title reads never race) rather
+//              than continuing to guess at frequencies.
 // ============================================================================
 
 module gowin_pll_cart (
@@ -50,8 +55,8 @@ module gowin_pll_cart (
         .FCLKIN("27"),
         .DEVICE("GW1NR-9C"),
         .IDIV_SEL(0),       // Input divider: 27/(0+1) = 27MHz
-        .FBDIV_SEL(2),      // Feedback: 27*3 = 81MHz
-        .ODIV_SEL(8),       // VCO = 81 * 8 = 648MHz
+        .FBDIV_SEL(3),      // Feedback: 27*4 = 108MHz
+        .ODIV_SEL(8),       // VCO = 108 * 8 = 864MHz
         .DYN_SDIV_SEL(2),
         .CLKFB_SEL("internal"),
         .CLKOUT_BYPASS("false"),

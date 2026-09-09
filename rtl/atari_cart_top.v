@@ -204,7 +204,6 @@ module atari_cart_top #(
     wire [7:0] sideband_status_val;
     wire [7:0] sideband_meta_rdata;
     wire [7:0] sideband_config_val;
-    wire [7:0] sideband_debug0;
     wire [15:0] loader_cart_ram_addr;
     wire [7:0]  loader_cart_ram_wdata;
     wire        loader_cart_ram_we;
@@ -225,7 +224,6 @@ module atari_cart_top #(
             wire [7:0] svc_status_val;
             wire [7:0] svc_meta_rdata;
             wire [7:0] svc_config_val;
-            wire [7:0] svc_debug0;
             wire [15:0] svc_ram_addr;
             wire [7:0]  svc_ram_wdata;
             wire        svc_ram_we;
@@ -241,7 +239,7 @@ module atari_cart_top #(
                 .rst_n         (core_rst_n),
                 .trigger_val   (trigger_val_sideband),
                 .status_val    (svc_status_val),
-                .debug0        (svc_debug0),
+                .debug0        (),
                 .debug1        (),
                 .debug2        (),
                 .config_val    (svc_config_val),
@@ -273,7 +271,6 @@ module atari_cart_top #(
             assign sideband_status_val   = svc_status_val;
             assign sideband_meta_rdata   = svc_meta_rdata;
             assign sideband_config_val   = svc_config_val;
-            assign sideband_debug0       = svc_debug0;
             assign loader_cart_ram_addr  = svc_ram_addr;
             assign loader_cart_ram_wdata = svc_ram_wdata;
             assign loader_cart_ram_we    = svc_ram_we;
@@ -288,7 +285,6 @@ module atari_cart_top #(
             assign sideband_status_val   = game_ready ? 8'h80 : 8'h00;
             assign sideband_meta_rdata   = 8'hFF;
             assign sideband_config_val   = 8'h03; // Default $0450 POKEY
-            assign sideband_debug0       = 8'h00;
             assign loader_cart_ram_addr  = 16'h0000;
             assign loader_cart_ram_wdata = 8'h00;
             assign loader_cart_ram_we    = 1'b0;
@@ -350,12 +346,6 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     wire is_cart_addr   = (a_sync >= 16'h4000);
     wire is_status_addr = (a_sync == 16'h7FF0);
-    // $7FF1: SD-scanned title count (entry_count), written by firmware via
-    // femtorv_service_soc's debug0 CSR right after run_fat_scan() completes.
-    // Mirrors the existing $7FF0 status-byte pattern exactly -- debug0 was
-    // already routed out of femtorv_service_soc (port comment: "To Atari
-    // read of $7FF1") but never actually wired to this decode until now.
-    wire is_debug0_addr = (a_sync == 16'h7FF1);
     wire is_menu_addr   = (a_sync >= 16'hE000);
     wire is_pokey_4000  = (a_sync[15:4] == 12'h400); // $4000-$400F
     wire is_pokey_0450  = (a_sync[15:4] == 12'h045); // $0450-$045F
@@ -526,8 +516,7 @@ module atari_cart_top #(
     // menu ROM -- see the BRAM instances above).
     wire is_menu_addr_cart = (game_chunk_rsel >= 5'd20);
     wire [7:0] menu_bus_data_out = is_status_addr ? status_data_out :
-                                   (is_debug0_addr ? sideband_debug0 :
-                                   (is_menu_addr_cart ? rom_data_out : 8'hFF));
+                                   (is_menu_addr_cart ? rom_data_out : 8'hFF);
     wire [7:0] bus_data_out = game_mode ? (drive_pokey ? pokey_dout : rom_data_out)
                                         : menu_bus_data_out;
 

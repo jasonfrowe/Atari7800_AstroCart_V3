@@ -31,32 +31,10 @@
  ;
  ; Initialize variables
  ;
- ; game_count is set below, from the real SD-scanned count at $7FF1 --
- ; not hardcoded, so it matches however many titles actually exist.
+ game_count = 8
  selected_game = 0
  joy_delay = 0
  
- ;
- ; Wait for the SD scan to actually finish before drawing anything: this
- ; program starts running as soon as the FPGA boots, racing the firmware's
- ; own SD scan on a completely separate RISC-V core. Without this wait,
- ; draw_game_list below (called exactly once, then frozen forever by
- ; savescreen/restorescreen) could run before the scan has written any --
- ; or all -- of the real titles, showing whatever stale/partial data
- ; happened to be there. $7FF1 (entry_count) starts at 0 and firmware
- ; writes the real scanned count there right after the scan completes
- ; (success or failure), so waiting for it to go nonzero is a reliable
- ; "scan is done" signal for the known current setup (a always-populated
- ; SD card) -- an SD card with zero valid entries would hang here forever,
- ; not a concern for the current fixed 8-cart test card.
- ;
- asm
-.wait_scan_ready
-   lda $7FF1
-   beq .wait_scan_ready
-   sta game_count
-end
-
  ;
  ; Draw initial screen once and save it
  ;
@@ -64,7 +42,7 @@ end
  gosub draw_title
  gosub draw_game_list
  savescreen
-
+ 
 main_loop
  ;
  ; Restore background, then draw dynamic elements
@@ -144,11 +122,10 @@ check_input
 select_game_end
  
  ;
- ; Keep selected_game in bounds (game_count is the real SD-scanned count,
- ; not a hardcoded 8, so this stays correct if fewer than 8 titles exist)
+ ; Keep selected_game in bounds
  ;
- if selected_game >= game_count then selected_game = 0
- if selected_game > 127 then selected_game = game_count - 1
+ if selected_game > 7 then selected_game = 0
+ if selected_game > 127 then selected_game = 7
  return
  
  ;

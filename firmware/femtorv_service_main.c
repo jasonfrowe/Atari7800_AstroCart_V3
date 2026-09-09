@@ -480,13 +480,6 @@ static void run_fat_scan(void) {
     overflow = scan_and_populate(&valid_bitmap, &entry_count, &last_error);
     (void)overflow;
 
-    // Publish the real scanned title count at $7FF1 (CART_CSR_DEBUG0), so
-    // the menu can draw exactly this many slots instead of a hardcoded
-    // MENU_SLOT_COUNT -- overwrites CART_CSR_DEBUG0's scan-time use (slot 1's
-    // header version, written above), which is a transient diagnostic no
-    // longer needed once the scan is done.
-    CART_CSR_DEBUG0 = entry_count;
-
     if (entry_count == 0u) {
         if (last_error == 0u) {
             last_error = 0x6Au;

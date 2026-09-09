@@ -54,6 +54,25 @@ module atari_cart_top #(
     assign O_psram_reset_n = 1'b1;
 
     // ------------------------------------------------------------------------
+    // Cart ROM/RAM BRAM read clock: independent ~81MHz PLL, decoupled from
+    // femtorv_service_soc's own 54MHz svc_clk (FemtoRV/PSRAM). This is the
+    // clock for ram_block_2k's Port A (MARIA/CPU reads of the loaded game) --
+    // svc_clk was the shared read-port clock before, and 54MHz wasn't enough
+    // read bandwidth for MARIA's DMA during heavy sprite action (Choplifter).
+    // Port B (the SD loader's write port) stays on svc_clk unchanged; Gowin's
+    // dual-port BSRAM natively supports independent clocks per port, so no
+    // CDC synchronizers are needed at the BRAM itself. See gowin_pll_cart.v.
+    // ------------------------------------------------------------------------
+    wire clk_cart;
+    wire cart_pll_lock;
+
+    gowin_pll_cart u_pll_cart (
+        .clkin (clk),
+        .clkout(clk_cart),
+        .lock  (cart_pll_lock)
+    );
+
+    // ------------------------------------------------------------------------
     // Internal Power-On Reset (POR) Generator
     // Holds rst_n Low for ~4,096 cycles (~151 us) after FPGA bitstream boot,
     // then smoothly releases rst_n to High continuously.
@@ -113,7 +132,7 @@ module atari_cart_top #(
     wire phi2_high  = phi2_clean;
     wire phi2_rise  = (phi2_clean && !phi2_clean_prev);
     wire rw_is_read = rw_pipe[1];
-    wire core_rst_n = rst_n && warm_rst_n;
+    wire core_rst_n = rst_n && warm_rst_n && cart_pll_lock;
 
     always @(posedge clk) begin
         if (phi2_rise)
@@ -356,19 +375,19 @@ module atari_cart_top #(
 
     // Blocks 0..3: Initialized with FemtoRV firmware image for power-on bootloader copy to PSRAM
     ram_block_2k #(.INIT_FILE("femtorv_chunk_00.hex")) u_game_ram_00 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[0]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[0]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd0)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_01.hex")) u_game_ram_01 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[1]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[1]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd1)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_02.hex")) u_game_ram_02 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[2]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[2]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd2)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_03.hex")) u_game_ram_03 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[3]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[3]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd3)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
 
@@ -377,7 +396,7 @@ module atari_cart_top #(
     generate
         for (gi = 4; gi < 20; gi = gi + 1) begin : gen_game_ram
             ram_block_2k #(.INIT_FILE("")) u_game_ram (
-                .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[gi]),
+                .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[gi]),
                 .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == gi[4:0])), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
             );
         end
@@ -385,19 +404,19 @@ module atari_cart_top #(
 
     // Blocks 20..23: Initialized with 8KB Menu ROM ($E000-$FFFF)
     ram_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_game_ram_20 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[20]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[20]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd20)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_game_ram_21 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[21]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[21]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd21)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_game_ram_22 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[22]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[22]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd22)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_game_ram_23 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[23]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[23]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd23)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
 

@@ -12,8 +12,6 @@
 //              to lock and run at this rate on this exact board.
 // ============================================================================
 
-`default_nettype none
-
 module gowin_pll_cart (
     input  clkin,
     output clkout,
@@ -68,5 +66,3 @@ module gowin_pll_cart (
 `endif
 
 endmodule
-
-`default_nettype wire

@@ -97,7 +97,13 @@ module atari_cart_top #(
     // whole SoC (wiping out an in-progress or just-finished SD scan/load)
     // seconds into normal operation -- long after cart RAM already has stale
     // menu titles displayed from the scan that ran before that reset fired.
-    reg [24:0] phi2_idle_ctr = 25'd0;
+    // Widened again to 27 bits when this block moved onto clk_cart (~81MHz,
+    // see below): the same cycle-count threshold at a ~3x faster clock is
+    // ~3x less real time, which would have silently shrunk the ~1.24s
+    // margin back down to ~0.41s and reintroduced the exact spurious-trip
+    // risk the original widening fixed. 27 bits @ 81MHz gives ~1.66s,
+    // comfortably at or above the original real-time margin.
+    reg [26:0] phi2_idle_ctr = 27'd0;
     reg [11:0] warm_rst_ctr  = 12'd0;
     reg        warm_rst_n    = 1'b0;
 
@@ -176,13 +182,27 @@ module atari_cart_top #(
     wire rw_is_read = rw_pipe[1];
     wire core_rst_n = rst_n && warm_rst_n;
 
-    always @(posedge clk) begin
+    // Moved onto clk_cart: phi2_rise is generated there (it's derived from
+    // the bus synchronizers above, now clk_cart-domain) and is only ONE
+    // clk_cart cycle wide (~12.3ns). Sampling a pulse that narrow from the
+    // slower `clk` (27MHz, ~37ns period) risks missing it entirely -- and
+    // since both clocks are deterministically generated from the same
+    // crystal with fixed startup phase, a bad relationship would miss
+    // EVERY phi2_rise pulse on every power-up, not intermittently. That
+    // means phi2_idle_ctr would never see a reset pulse, climb to its
+    // ~1.24s threshold, and fire an unwanted warm reset purely from this
+    // internal miscount -- independent of whether the real Atari bus is
+    // idle at all. This is the likely cause of "menu boots briefly, then
+    // crashes" with the SD scan never completing. Verilator sim cannot
+    // exercise this: it ties clk_cart to the same edge as clk, so there's
+    // no pulse-width mismatch to miss in the first place.
+    always @(posedge clk_cart) begin
         if (phi2_rise)
-            phi2_idle_ctr <= 25'd0;
-        else if (phi2_idle_ctr != 25'h1FFFFFF)
+            phi2_idle_ctr <= 27'd0;
+        else if (phi2_idle_ctr != 27'h7FFFFFF)
             phi2_idle_ctr <= phi2_idle_ctr + 1'b1;
 
-        if (phi2_idle_ctr == 25'h1FFFFFF) begin
+        if (phi2_idle_ctr == 27'h7FFFFFF) begin
             warm_rst_n   <= 1'b0;
             warm_rst_ctr <= 12'd0;
         end else if (!warm_rst_n) begin

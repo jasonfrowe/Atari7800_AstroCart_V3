@@ -14,7 +14,7 @@ create_clock -name clk -period 37.037 [get_ports {clk}]
 # samples it. Declare the domains as async clock groups so STA doesn't
 # report spurious synchronous-timing violations across a boundary that was
 # never meant to be synchronous in the first place.
-create_clock -name clk_cart -period 9.259 [get_pins {u_pll_cart/pll_inst/CLKOUT}]
+create_clock -name clk_cart -period 12.346 [get_pins {u_pll_cart/pll_inst/CLKOUT}]
 create_clock -name svc_clk -period 18.518 [get_pins {gen_h5_sideband.u_service/u_pll/pll_inst/CLKOUT}]
 
 set_clock_groups -asynchronous -group [get_clocks {clk_cart}] -group [get_clocks {clk svc_clk}]

@@ -497,6 +497,7 @@ static void load_game(uint8_t slot) {
     uint32_t bytes_loaded = 0;
     uint8_t chunk_buf[256];
     uint32_t ram_offset = 0;
+    uint8_t checksum = 0u;
 
     loader_set_stage(0x20u);
 
@@ -610,6 +611,7 @@ static void load_game(uint8_t slot) {
         }
         for (UINT i = 0; i < br; ++i) {
             REG8(CART_RAM_BASE + ram_offset + bytes_loaded + (uint32_t)i) = chunk_buf[i];
+            checksum ^= chunk_buf[i];
         }
         bytes_loaded += br;
     }
@@ -618,6 +620,16 @@ static void load_game(uint8_t slot) {
         loader_set_stage(0x69u);
         return;
     }
+
+    // NOTE: checksum is computed but not currently transmitted -- the
+    // on-screen/status-channel display mechanism was removed because the
+    // real bug turned out to be architectural (see menu.bas's wait_loop:
+    // the menu ROM and loaded game share the same physical BRAM, so the
+    // menu's own code gets overwritten mid-transfer). Once that's confirmed
+    // fixed, checksum can be re-exposed safely via the background-color
+    // trick in menu.bas's zero-page-resident wait stub (sta $20), which
+    // doesn't depend on any cart-ROM-resident display code.
+    (void)checksum;
 
     // Set status ready bit 7: ALL BYTES WRITTEN TO BSRAM!
     loader_set_stage(0x80u);

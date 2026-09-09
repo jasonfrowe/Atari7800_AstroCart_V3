@@ -1036,7 +1036,9 @@ int main(int argc, char** argv) {
               << " game_ready=" << (int)top->rootp->atari_cart_top__DOT__game_ready
               << " game_mode=" << (int)top->rootp->atari_cart_top__DOT__game_mode << std::endl;
 
-    const long LOAD_TIMEOUT_TICKS = 300000000L; // generous budget for ~97 real sector reads
+    const long LOAD_TIMEOUT_TICKS = 2500000000L; // generous budget for ~97 real sector reads
+                                                  // plus load_game()'s two ~1.2M-iteration
+                                                  // debug_delay() busy-waits (checksum display)
     const long PROGRESS_EVERY = 20000000L;
     long elapsed = 0;
     long next_progress = PROGRESS_EVERY;

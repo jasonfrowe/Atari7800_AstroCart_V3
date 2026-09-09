@@ -144,36 +144,47 @@ flash_loop
  ; Trigger FPGA: bit 7 marks the write as a load request; low bits pick the slot.
  fpga_trigger = selected_game + 128
 
- ; Wait for load to finish (poll $7FF0), same structure as the last known-good
- ; handoff: stay in normal 7800basic execution (restorescreen/drawscreen keep
- ; running every frame, so NMI/kernel housekeeping and the display both keep
- ; working normally) instead of parking in a disabled-DMA busy loop for the
- ; whole SD transfer.
-wait_loop
- restorescreen
- drawscreen
+ ; CRITICAL: the menu ROM and the loaded game share the SAME physical BRAM
+ ; (chunks 20-23 / Atari $E000-$FFFF -- there isn't room for both at once).
+ ; load_game() overwrites the menu's own running code as its copy loop
+ ; reaches that range, which is the LAST ~8KB of a 48K linear cart like
+ ; astrowing. Confirmed via a real-hardware recording: the screen renders
+ ; correctly for most of the transfer, then corrupts and crashes right as
+ ; the copy would reach offset $A000+ ($E000+ in Atari address space) --
+ ; exactly where the menu program (and this very loop) lives. So NOTHING
+ ; from here to the handoff jump can execute out of cart ROM -- no
+ ; restorescreen/drawscreen/plotchars, and not even this polling loop's own
+ ; code, since it would get overwritten mid-poll too.
+ ;
+ ; Fix: copy the ENTIRE wait+handoff routine into scratch RAM and run it
+ ; from there, and disable MARIA DMA so it stops trying to render from cart
+ ; RAM once the transfer starts overwriting it. This restores the structure
+ ; from commit 420d2d8 (the last version that got past this wait without
+ ; crashing -- its bug was a *separate*, later issue: the copied stub lived
+ ; at zero page $80-$91, colliding with 7800basic's own dlendsave kernel
+ ; array). Using $2210+ instead avoids that collision.
  asm
-   lda $7FF0
-   bpl .keep_waiting
+   lda #0
+   sta $3C                 ; disable MARIA DMA
 
-   ; Copy 6-byte ack+jump stub to scratch RAM at $2210, NOT zero page: $0082
-   ; is 7800basic's own dlendsave kernel save-buffer array, live RAM that
-   ; restorescreen/savescreen depend on. $2210 is unused scratch RAM instead.
    ldx #0
 .copy_handover_stub
    lda .handover_stub_code,x
    sta $2210,x
    inx
-   cpx #6
+   cpx #(.handover_stub_end - .handover_stub_code)
    bcc .copy_handover_stub
 
-   lda #$A5
    jmp $2210
 
 .handover_stub_code
-   sta $2200
-   jmp ($FFFC)
-
-.keep_waiting
+.wait_loaded
+   lda $7FF0                ; poll FPGA status register
+   sta $20                  ; crude visual feedback: raw status as background color
+   cmp #$80
+   bne .wait_loaded
+   lda #$A5                 ; acknowledge byte
+   sta $2200                ; switch FPGA to game mode
+   jmp ($FFFC)               ; jump into the freshly loaded game
+.handover_stub_end
 end
- goto wait_loop

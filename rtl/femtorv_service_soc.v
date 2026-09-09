@@ -117,6 +117,7 @@
     reg [15:0] dma_calib_cnt;
     reg [7:0]  b0;
     reg [7:0]  b1;
+    reg [2:0]  dma_wait_cnt;
     reg        femtorv_rst_n;
 
     localparam [3:0] DMA_WAIT_INIT = 4'd0;
@@ -260,6 +261,7 @@
             boot_idx        <= 13'd0;
             dma_state       <= DMA_WAIT_INIT;
             dma_calib_cnt   <= 16'd0;
+            dma_wait_cnt    <= 3'd0;
             femtorv_rst_n   <= 1'b0;
 
             psram_read      <= 1'b0;
@@ -348,22 +350,42 @@
                     end
 
                     DMA_R0: begin
-                        boot_raddr <= boot_idx;
-                        dma_state  <= DMA_R0_WAIT;
+                        boot_raddr   <= boot_idx;
+                        dma_wait_cnt <= 3'd0;
+                        dma_state    <= DMA_R0_WAIT;
                     end
 
+                    // Waits several svc_clk cycles (not just one) before
+                    // sampling boot_rdata: this address now crosses into
+                    // the independent clk_cart domain and back through a
+                    // 2-flop synchronizer plus the BRAM's own address
+                    // register (see atari_cart_top.v's game_ram_raddr_cart_s)
+                    // before chunk_rdata is valid, which no longer fits in
+                    // a single svc_clk cycle now that clk_cart is a
+                    // separate PLL rather than svc_clk itself. This is a
+                    // one-time 8KB power-on copy, so the extra cycles cost
+                    // nothing in practice -- generous margin here is free.
                     DMA_R0_WAIT: begin
-                        dma_state  <= DMA_R1;
+                        if (dma_wait_cnt >= 3'd5) begin
+                            dma_state <= DMA_R1;
+                        end else begin
+                            dma_wait_cnt <= dma_wait_cnt + 1'b1;
+                        end
                     end
 
                     DMA_R1: begin
-                        b0         <= boot_rdata;
-                        boot_raddr <= boot_idx + 13'd1;
-                        dma_state  <= DMA_R1_WAIT;
+                        b0           <= boot_rdata;
+                        boot_raddr   <= boot_idx + 13'd1;
+                        dma_wait_cnt <= 3'd0;
+                        dma_state    <= DMA_R1_WAIT;
                     end
 
                     DMA_R1_WAIT: begin
-                        dma_state  <= DMA_R2;
+                        if (dma_wait_cnt >= 3'd5) begin
+                            dma_state <= DMA_R2;
+                        end else begin
+                            dma_wait_cnt <= dma_wait_cnt + 1'b1;
+                        end
                     end
 
                     DMA_R2: begin

@@ -362,8 +362,37 @@ module atari_cart_top #(
     // Cartridge Game RAM (48KB across 24 BSRAM blocks)
     // ------------------------------------------------------------------------
     wire [15:0] game_ram_raddr = boot_busy ? {3'b000, boot_raddr} : phys_rom_addr[15:0];
-    wire [4:0]  game_chunk_rsel = game_ram_raddr[15:11];
-    wire [10:0] game_chunk_roff = game_ram_raddr[10:0];
+
+    // ------------------------------------------------------------------------
+    // Address synchronizer: game_ram_raddr is registered in the `clk`
+    // (27MHz) domain (via mapper_supergame/a_sync) or the svc_clk-domain
+    // boot DMA FSM's boot_raddr, and crosses here into clk_cart -- a
+    // SEPARATE, independent PLL instance from both `clk` and svc_clk's own
+    // PLL. Despite all sharing the same 27MHz reference, two independent
+    // PLLs have no fixed, guaranteed phase relationship to each other, so
+    // this is a genuine asynchronous multi-bit bus crossing, not just "a
+    // faster settle clock" (that reasoning only ever applied to Port A's
+    // *output*, which really is safely combinational -- it never applied to
+    // this address *input*). A raw wire straight into the BRAMs' own
+    // address register has no stage to let a metastable capture resolve
+    // before it's used as the actual read address -- rare enough to be
+    // invisible on the menu's slow SD-paced title scan, but frequent enough
+    // during MARIA's DMA-heavy gameplay reads to corrupt cart data and
+    // crash almost immediately (see blue/yellow-screen crash on every game
+    // load, not just Choplifter, after clk_cart was introduced). Double-
+    // register the whole bus in clk_cart before any BRAM sees it, and use
+    // the synchronized rsel for the output mux too so the mux selector
+    // always stays paired with the address that was actually presented to
+    // the BRAMs.
+    // ------------------------------------------------------------------------
+    reg [15:0] game_ram_raddr_cart_r1, game_ram_raddr_cart_s;
+    always @(posedge clk_cart) begin
+        game_ram_raddr_cart_r1 <= game_ram_raddr;
+        game_ram_raddr_cart_s  <= game_ram_raddr_cart_r1;
+    end
+
+    wire [4:0]  game_chunk_rsel = game_ram_raddr_cart_s[15:11];
+    wire [10:0] game_chunk_roff = game_ram_raddr_cart_s[10:0];
 
     wire [15:0] eff_loader_cart_ram_addr = (loader_cart_ram_addr >= 16'hE000) ?
                                            (loader_cart_ram_addr - 16'h4000) :

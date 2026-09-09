@@ -157,15 +157,19 @@ for reading status without a screen/serial connection.
 
 ## ✅ Current Milestone (Dynamic SD-Card Load, Confirmed On Real Hardware)
 
-As of 2026-09-09 (commit `c6a5272`, branch `LinearCartSupport`), confirmed on
-a real Tang Nano 9K -- not just in simulation:
+As of 2026-09-09 (branch `LinearCartSupport`, ending at commit `a16ac7c`),
+confirmed on a real Tang Nano 9K -- not just in simulation:
 
 1. The menu boots, scans the SD card's FAT32 filesystem via the
    FemtoRV32/PetitFatFS/`sd_controller.v` path, and displays discovered
    `.a78` game titles.
-2. Pressing fire triggers a full 48KB SD-card load of `astrowing.a78` into
-   cart RAM.
-3. The loaded game boots and plays correctly, including POKEY audio.
+2. Selecting **any** scanned game and pressing fire loads that specific
+   game (not just a hardcoded test ROM) via a full SD-card read into cart
+   RAM.
+3. Both 48K (`astrowing.a78`) and 32K (`Food Fight`, `Choplifter`) linear
+   carts load and run correctly, with POKEY enabled/placed according to
+   what each cart's own A78 header declares (including correctly *not*
+   enabling POKEY for carts whose header says they don't have one).
 
 This replaces an earlier, narrower "AstroWing parity" milestone that covered
 emulator/trace-replay/hardware checks for a single statically-baked-in
@@ -173,17 +177,36 @@ cartridge image with no SD card involved at all. That path (see
 `docs/V1_HARDWARE_CONTRACT.md`, now marked superseded) is no longer the
 project's architecture.
 
-Getting here required fixing a real, non-obvious bug: the menu ROM and any
-loaded game share the same physical BRAM (see the architecture note above),
-so a naive handoff loop that kept calling 7800basic's `restorescreen`/
-`drawscreen` kernel routines while the SD load was in progress caused the
-still-running menu's own code to be overwritten mid-execution once the copy
-reached the last ~8KB of a 48K linear cart -- confirmed via a real-hardware
-video recording showing on-screen corruption starting almost exactly when
-the transfer would reach that region. The fix (see `menu/menu.bas`'s
-`select_game` handoff logic) runs the entire wait-for-load loop from scratch
-RAM with MARIA DMA disabled, so nothing touches cart ROM until the freshly
-loaded game's own reset vector is jumped to.
+Getting here required fixing several real, non-obvious bugs:
+
+1. **Shared BRAM / handoff loop touching cart ROM**: the menu ROM and any
+   loaded game share the same physical BRAM (see the architecture note
+   above), so a naive handoff loop that kept calling 7800basic's
+   `restorescreen`/`drawscreen` kernel routines while the SD load was in
+   progress caused the still-running menu's own code to be overwritten
+   mid-execution once the copy reached the last ~8KB of a 48K linear cart --
+   confirmed via a real-hardware video recording showing on-screen
+   corruption starting almost exactly when the transfer would reach that
+   region. Fixed by running the entire wait-for-load loop from scratch RAM
+   with MARIA DMA disabled (see `menu/menu.bas`'s `select_game` label).
+2. **A78 v4 audio-field off-by-one**: the v4+ header's audio/POKEY-location
+   field is a 2-byte field at offsets 66-67, with the actual bit-encoded
+   value in the *second* byte; firmware was reading the first (padding)
+   byte, so every cart looked like it had no POKEY. Masked for a while by an
+   unconditional "default to POKEY @ $0450" fallback, which was removed
+   once the real bug was found -- that fallback would have incorrectly
+   forced POKEY on for carts (like Food Fight/Choplifter) whose header
+   correctly declares none.
+3. **32K padding value**: `$4000-$7FFF` is padded with `$00`, not `$FF`,
+   for a 32K linear cart -- matching `Atari7800_AstroCart_V2`'s proven
+   `rom_gen.py`, which ran the same Choplifter dump successfully.
+4. **MARIA CTRL disable value**: the wait/handoff loop disables MARIA DMA
+   with `sta $3C, #$7F`, not `#0` -- see the Handover Protocol Details
+   below for why `$00` leaves MARIA in an undefined state. This was the
+   fix for a real black-screen bug specific to Choplifter (audio played,
+   proving the CPU was running real code, but MARIA never produced a
+   display) -- astrowing/Food Fight's own init code happened to tolerate
+   the undefined `$00` state, Choplifter's did not.
 
 ## 📋 v1 Hardware Contract + Bring-Up Checklist
 
@@ -232,7 +255,7 @@ The Multi-Cart V3 features an integrated menu system compiled with 7800basic (`m
 | 3. Handover & Reset Execution (runs entirely from scratch RAM, NOT cart ROM --    |
 |    see the shared-BRAM note above: the menu's own code lives in the same          |
 |    memory being overwritten by the load, so nothing here can touch cart ROM)      |
-|    - 6502 disables MARIA DMA (sta $3C, #0) so it stops rendering from the         |
+|    - 6502 disables MARIA DMA (sta $3C, #$7F) so it stops rendering from the       |
 |      memory being overwritten                                                     |
 |    - 6502 copies the ENTIRE wait+handoff routine to scratch RAM at $2210+         |
 |      (not zero page -- $80-$91 collides with 7800basic's own dlendsave            |
@@ -248,7 +271,7 @@ The Multi-Cart V3 features an integrated menu system compiled with 7800basic (`m
 ### Handover Protocol Details:
 1. **Triggering Load**: The 7800 menu writes `selected_game + 128` to `$2200`. Bit 7 indicates an active load request.
 2. **Shared BRAM constraint**: the menu ROM and the loaded game occupy the same physical BRAM chunks (Atari `$E000-$FFFF`), since both didn't fit at once. `load_game()` overwrites that entire range as its copy reaches the end of a 48K linear cart -- including the memory the menu is still executing from. So from the trigger write onward, nothing can execute out of cart ROM until the new game's reset vector is jumped to.
-3. **Scratch-RAM wait+handoff routine**: the 6502 disables MARIA DMA, then copies the *entire* poll-and-handoff routine (not just the final jump) into scratch RAM at `$2210+` and runs it from there -- it has to keep running even after the menu's own compiled code gets overwritten by the tail of the transfer. It polls `$7FF0` for an exact `$80` ("ready"), then stores `#$A5` to `$2200` to acknowledge handover and executes `jmp ($FFFC)` to launch the newly loaded ROM. See `menu/menu.bas`'s `select_game` label for the current, working implementation and its in-line comments for the full story (including why an earlier zero-page-`$80` version of this stub caused a crash: it collided with 7800basic's own `dlendsave` kernel save-buffer array).
+3. **Scratch-RAM wait+handoff routine**: the 6502 disables MARIA DMA (`sta $3C, #$7F` -- not `#0`: MARIA's CTRL register bits 6:5 are a 2-bit DMA-control field where only `2` (normal DMA) and `3` (no DMA) are valid, both requiring bit 6 set, per 7800basic's own `startup.asm` documentation; writing `$00` clears bit 6 too, landing MARIA in an undefined state some games' init code doesn't tolerate -- this caused a real black-screen bug in one of three test carts, see below), then copies the *entire* poll-and-handoff routine (not just the final jump) into scratch RAM at `$2210+` and runs it from there -- it has to keep running even after the menu's own compiled code gets overwritten by the tail of the transfer. It polls `$7FF0` for an exact `$80` ("ready"), then stores `#$A5` to `$2200` to acknowledge handover and executes `jmp ($FFFC)` to launch the newly loaded ROM. See `menu/menu.bas`'s `select_game` label for the current, working implementation and its in-line comments for the full story (including why an earlier zero-page-`$80` version of this stub caused a crash: it collided with 7800basic's own `dlendsave` kernel save-buffer array).
 
 ---
 

@@ -597,11 +597,20 @@ static void load_game(uint8_t slot) {
     CART_CSR_CONFIG = cfg;
 
     // If 32KB ROM (e.g. Choplifter, Food Fight):
-    // $4000-$7FFF is padded with $FF (16384 bytes)
+    // $4000-$7FFF is padded with $00 (16384 bytes)
     // Game payload goes to $8000-$FFFF (Cart RAM offset 16384 to 49151)
+    //
+    // Padding value matters: Atari7800_AstroCart_V2's rom_gen.py (which ran
+    // this exact Choplifter dump successfully) pads with zeros, not $FF.
+    // Astrowing/Food Fight don't seem to care what's there, but Choplifter's
+    // own code likely reads/checks this region (e.g. a cold-vs-warm-boot
+    // signature check) and behaves differently depending on what it finds --
+    // consistent with the observed symptom (audio runs fine, so the CPU is
+    // executing real code; MARIA never gets configured, consistent with the
+    // game's own init code taking a different branch and skipping it).
     if (rom_size <= 32768u) {
         for (uint32_t i = 0u; i < 16384u; ++i) {
-            REG8(CART_RAM_BASE + i) = 0xFFu;
+            REG8(CART_RAM_BASE + i) = 0x00u;
         }
         ram_offset = 16384u;
     }

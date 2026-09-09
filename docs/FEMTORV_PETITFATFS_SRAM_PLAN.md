@@ -159,7 +159,7 @@ Exit criteria:
 
 1. Menu can read static test payload from this window with no SD dependency.
 
-Implemented layout (current):
+Implemented layout (current, superseded -- see correction below):
 
 1. Window base: 0xE800-0xE9FF (read-only in current Phase B implementation).
 2. Header bytes:
@@ -180,6 +180,19 @@ Implemented layout (current):
      - +34: slot_flags
      - +35: reserved
 4. Static payload includes two valid demo slots for no-SD smoke testing.
+
+**Correction (2026-09-09): what actually shipped is simpler than the above.**
+`firmware/femtorv_service_main.c` writes plain 32-byte sanitized title strings
+directly at `MENU_TITLES_OFFSET` (`0xA800` cart-RAM offset = Atari `$E800`)
+with `MENU_SLOT_STRIDE = 32` (not 36) and `MENU_SLOT_COUNT = 8` -- no signature
+bytes, no `entry_count`/`valid_bitmap`/per-slot mapper-audio-flags header ever
+made it into the shipped layout. `menu/menu.bas` hardcodes `game_count = 8` and
+unconditionally reads/displays slots 0-7 via `plotchars $E800/$E820/.../$E8E0`
+-- it never reads a scan-done flag or entry count from the window at all. This
+works in practice because slots for files that weren't found are simply left
+as whatever cart RAM held (title-writing is best-effort per discovered file),
+but it means the "no-SD smoke testing" and dynamic entry-count polling
+described above are aspirational, not implemented.
 
 ### Phase C: Expand FAT Scan from First-Match to Multi-Entry Enumeration
 
@@ -227,9 +240,16 @@ Exit criteria:
 
 Status:
 
-1. Implemented on menu.bas path.
-2. Menu now issues rescan command (0x2200 = 0x81), polls metadata flags, reads entry count, and renders slot titles from 0xE820+.
-3. Empty/fail/timeout fallback strings are shown when no valid entries are available.
+1. Implemented on menu.bas path, but simpler than described: `game_count` is
+   hardcoded to 8 in menu.bas (not read from the FPGA), and slot titles render
+   unconditionally from `$E800, $E820, ... $E8E0` (8 slots of 32 bytes each,
+   starting at `$E800` -- not `$E820`, and there is no separate scan-done/entry-
+   count polling step). See the correction note under Phase B above.
+2. No dedicated rescan command byte value is currently wired up beyond the
+   existing load-trigger semantics on `$2200`.
+3. There is no distinct "fail/timeout fallback string" path; an unpopulated
+   slot just shows whatever was last written there (title-writing during scan
+   is best-effort per discovered file).
 
 ### Phase E: Selection-to-Launch Metadata Bridge
 
@@ -243,6 +263,25 @@ Tasks:
 2. On selection, write command/select index to service registers.
 3. Service acknowledges selected entry and stages launcher metadata.
 4. Preserve existing handover contract compatibility for future ROM streaming.
+
+Status (2026-09-09):
+
+1. Implemented, differently than originally scoped: rather than a general
+   "selected slot -> resolved path" bridge, `firmware/femtorv_service_main.c`
+   tracks `g_slot_paths[MENU_SLOT_COUNT][32]` (the full path discovered for
+   every scanned slot) plus a dedicated `g_astro_slot` that always resolves to
+   whichever slot's short filename starts with "ASTRO" -- `load_game()`
+   currently always loads that slot regardless of which menu entry the user
+   selected, since only the single `astrowing.a78` load path is validated end
+   to end so far. Extending this to genuinely load *any* selected slot's file
+   is the real remaining work here, not the metadata bridge itself.
+2. **Confirmed working end-to-end on real Tang Nano 9K hardware 2026-09-09**
+   (commit `c6a5272`, branch `LinearCartSupport`): menu boots, displays
+   SD-derived titles, fire triggers a full 48KB SD-card load of
+   `astrowing.a78` into cart RAM via this path, and the loaded game boots and
+   plays correctly with POKEY audio. See `menu/menu.bas`'s `select_game`
+   handoff logic and the shared-BRAM constraint note there for how the final
+   handoff is made crash-safe.
 
 Exit criteria:
 

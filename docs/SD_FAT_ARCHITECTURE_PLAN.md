@@ -1,5 +1,32 @@
 # SD FAT Architecture Plan (Synthesis-Safe)
 
+## Status: superseded by what shipped (updated 2026-09-09)
+This is a historical planning document. What actually shipped differs in several
+ways worth knowing before reading further:
+- **Not Hazard5.** The SD service plane is `rtl/femtorv_service_soc.v`, a FemtoRV32
+  ("quark") RISC-V softcore, not Hazard5 -- Hazard5 integration was tried and
+  abandoned; `rtl/hazard5_soc.v` remains in the repo but is unused by the current
+  top-level build. Firmware is `firmware/femtorv_service_main.c`, not
+  `firmware/main.c` (which still exists but is a separate, non-SD-loading target).
+- **No mailbox RAM, no extended CSR contract.** The elaborate `0x2201-0x2203`
+  ARG/SEQ register proposal below was never built. The shipped design kept the
+  original minimal contract: `$2200` trigger (bit 7 = load request, low bits =
+  slot) and `$7FF0` status (bit 7 = done). Menu titles are written directly into
+  the shared cart-RAM array at the address the menu's `plotchars` calls read from
+  ($E800-$E9FF), not through a separate mailbox.
+- **SD transport is `rtl/sd_controller.v`**, ported from the AstroCart V2 project
+  (a proven hardware SPI block-read controller), not the software-bitbanged
+  `rtl/spi_sd.v` this plan and the early firmware assumed.
+- **The menu ROM and the loaded game share the same physical BRAM** (there wasn't
+  room for a separate execution-source BSRAM alongside the 48KB game-RAM array),
+  which the two-plane isolation described below does not account for -- see
+  `menu/menu.bas`'s handoff comments for how this is actually handled (disable
+  MARIA DMA, run the wait/handoff loop from scratch RAM instead of cart ROM).
+
+The constraints and CSR contract below are preserved as a historical record of
+the original design intent; treat them as background, not as a description of
+the current system.
+
 ## Goal
 Add FAT-formatted SD browsing and ROM metadata extraction without destabilizing the frozen hardware-good build.
 

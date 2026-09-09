@@ -52,11 +52,7 @@ Each character should be clearly distinguishable at 4×8 pixels.
 
 ## Status
 
-⚠️ **TODO**: Create initial menufont.png graphic
-
-You can create a placeholder by:
-```bash
-convert -size 32x8 xc:black -colorspace RGB -type Palette PNG8:menufont.png
-```
-
-Then edit it with a pixel editor to add the actual font glyphs.
+`menufont.png` exists and is in active use -- the menu displays game titles,
+selection UI, and text correctly with it. The creation steps above are kept
+for reference if the font ever needs to be redone or extended, not because
+it's still outstanding work.

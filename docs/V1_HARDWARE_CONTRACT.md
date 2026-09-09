@@ -1,5 +1,17 @@
 # V1 Hardware Contract and Bring-Up Checklist
 
+## Status: superseded (updated 2026-09-09)
+This document describes an early milestone -- a single statically-baked-in
+AstroWing cartridge image with no SD card involved at all ("Current Tang Nano
+9K core does not yet boot AstroWing on real hardware" below) -- that has long
+since been surpassed. The project now dynamically loads `.a78` files from a
+FAT32 SD card at runtime (see `docs/FEMTORV_PETITFATFS_SRAM_PLAN.md` for that
+architecture) and has confirmed, on real hardware, booting a menu that scans
+the SD card, then loading and running `astrowing.a78` with working POKEY
+audio via that SD path (commit `c6a5272`, branch `LinearCartSupport`,
+2026-09-09). Kept below as a historical record of the original static-cart
+bring-up contract; do not treat it as the current scope or status.
+
 ## Objective
 
 Define the minimum verifiable requirements for a Tang Nano 9K Atari 7800 cartridge core that runs AstroWing on real hardware with functional parity to the validated emulator/simulation flow.

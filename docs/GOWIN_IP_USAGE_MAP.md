@@ -1,33 +1,31 @@
 # Gowin IP Usage Map (Tang 9K)
 
-## Current Status
-This repository now uses a custom Gowin primitive wrapper for firmware RAM, includes generated Gowin IP files in synthesis inputs, and instantiates a sideband Hazard5 path for trigger/status/SD routing.
+## Current Status (updated 2026-09-09)
+**The sideband service plane described below as "Hazard5" is stale and no longer accurate.** `rtl/hazard5_soc.v` (and the `gowin_sp_be32`/`gowin_sdpb_mailbox` paths it uses) is still present in the repo and in the synthesis file list, but is **not instantiated anywhere in the current `rtl/atari_cart_top.v`** -- confirmed by grepping for `hazard5_soc` instantiation in the top-level and its variants and finding none. The actual, currently-active sideband service plane is `rtl/femtorv_service_soc.v`, a FemtoRV32 ("quark") RISC-V softcore running C firmware (`firmware/femtorv_service_main.c` + PetitFatFS) that does the FAT32 SD-card scan/load, gated by the `H5_SIDEBAND_EN` parameter (the name is a historical holdover from when Hazard5 filled this role; it now gates the FemtoRV path instead). SD-card SPI transport is `rtl/sd_controller.v` (ported from the AstroCart V2 project), not any Hazard5-driven SPI logic. The `hazard5/` core itself remains in the repo for potential future use but is currently dead code in the shipping bitstream.
 
 ## What Contributes Today
 1. Firmware RAM path:
-   - Source: rtl/gowin_sp_be32.v
-   - Use: 2K x 32 single-port memory with byte write enables using 4 x SP byte lanes.
-   - Reason: generated gowin_sp core does not expose byte-write enables in current wizard settings.
+   - Source: `rtl/ram_block_2k.v` instances inside `rtl/atari_cart_top.v` (24 chunks form the shared 48KB "Cartridge Game RAM" array; 4 more chunks hold the FemtoRV firmware image, loaded into PSRAM at boot).
+   - Note: `rtl/gowin_sp_be32.v` (2Kx32 single-port memory with byte write enables) exists but is only used inside `rtl/hazard5_soc.v`, which is not currently instantiated.
 
-2. Top-level ROM path:
-   - Source: rtl/rom_block_2k.v
-   - Use: inferred 2K x 8 ROM blocks loaded by INIT_FILE.
-   - Reason: generated pROM core as configured does not consume per-instance INIT_FILE for chunked ROM payloads.
+2. Top-level ROM/RAM path:
+   - Source: rtl/rom_block_2k.v (used by some wrapper variants) and rtl/ram_block_2k.v (used by the current default top, since these blocks must be both INIT_FILE-loadable at synthesis time and runtime-writable for SD-card game loads).
+   - Reason: generated pROM/SP cores as configured do not consume per-instance INIT_FILE for chunked ROM payloads and/or don't expose the needed write behavior.
 
 3. Sideband service-plane path:
-   - Source: rtl/atari_cart_top.v + rtl/hazard5_soc.v
-   - Use: Hazard5 instantiation routes trigger/status and SD pins only.
+   - Source: `rtl/atari_cart_top.v` + `rtl/femtorv_service_soc.v` (NOT `rtl/hazard5_soc.v` -- see Current Status above).
+   - Use: FemtoRV32 quark core runs firmware that scans the SD card's FAT32 filesystem, populates the menu's title-list window, and streams a selected `.a78` cartridge image into the shared cart-RAM array on request.
    - Constraint: no ROM read-mux or mapper datapath changes in this stage.
 
-4. Mailbox RAM plumbing:
-   - Source: rtl/gowin_sdpb_mailbox.v
-   - Use: 256 x 8 mailbox region mapped in hazard5_soc (0xD000_0000..0xD000_00FF).
-   - Note: intended for staged metadata exchange; functional usage depends on firmware access.
+4. Mailbox/metadata RAM plumbing:
+   - `rtl/gowin_sdpb_mailbox.v` exists but is **not currently instantiated** by `femtorv_service_soc.v` or `atari_cart_top.v`. Menu title/metadata exchange instead happens by having firmware write directly into the shared cart-RAM array (via the `CART_RAM_BASE` MMIO write port) at the address range the menu's `plotchars` calls read from ($E800-$E9FF) -- no separate mailbox RAM is in the current datapath.
 
 ## What Is Included But Not Yet Functionally Used
 1. rtl/ip/gowin/gowin_prom/gowin_prom.v
 2. rtl/ip/gowin/gowin_sp/gowin_sp.v
 3. rtl/ip/gowin/gowin_sdpb/gowin_sdpb.v
+4. rtl/hazard5_soc.v and the full rtl/hazard5/ core (superseded by rtl/femtorv_service_soc.v for the SD-loading role; kept in the file list/repo but not elaborated into the current default top-level build)
+5. rtl/gowin_sdpb_mailbox.v (see item 4 above)
 
 These are now in the synthesis file list so their presence is traceable in Gowin logs. They are not yet driving active datapaths in the frozen top-level behavior.
 

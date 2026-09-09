@@ -1,6 +1,6 @@
 # Atari 7800 Multi-Cart V3 (Tang Nano 9K FPGA)
 
-A high-performance FPGA Multi-Cart for the Atari 7800 ProSystem featuring cycle-exact POKEY audio synthesis, Hazard5 RISC-V softcore FAT32 SD loader, level-shifter bus control, and SuperGame bankswitching support.
+A high-performance FPGA Multi-Cart for the Atari 7800 ProSystem featuring cycle-exact POKEY audio synthesis, a FemtoRV32 RISC-V softcore FAT32 SD loader, level-shifter bus control, and SuperGame bankswitching support.
 
 ---
 
@@ -21,16 +21,33 @@ A high-performance FPGA Multi-Cart for the Atari 7800 ProSystem featuring cycle-
  |                      Sipeed Tang Nano 9K FPGA                           |
  |                                                                         |
  |  +--------------------+  +------------------+  +---------------------+  |
- |  |  Hazard5 RISC-V    |  |  SPI SD Controller| | POKEY Audio Synth   |  |
- |  |  Softcore Core     |->|  Pins 36,37,38,39|  | Cycle-Exact Core    |  |
- |  +--------------------+  +------------------+  +---------------------+  |
+ |  |  FemtoRV32 "quark"  |  |  sd_controller.v | | POKEY Audio Synth   |  |
+ |  |  RISC-V softcore +  |->|  hardware SPI    | | Cycle-Exact Core    |  |
+ |  |  PetitFatFS (FAT32) |  |  Pins 36,37,38,39|  +---------------------+  |
+ |  +--------------------+  +------------------+                          |
  |            |                                              |             |
  |  +---------v----------+  +------------------+  +-----------v----------+  |
- |  | Dual-Port Cart BRAM|<--| SuperGame Mapper |->| 1-bit Audio PWM Out  |  |
- |  | 48K/64K Memory     |  | 128K/256K/512K   |  | Pin 76 (T_EAUD)      |  |
- |  +--------------------+  +------------------+  +----------------------+  |
+ |  | Shared Cart BRAM   |<--| SuperGame Mapper |->| 1-bit Audio PWM Out  |  |
+ |  | 48K game RAM +     |  | 128K/256K/512K   |  | Pin 76 (T_EAUD)      |  |
+ |  | 8K menu ROM, same  |  +------------------+  +----------------------+  |
+ |  | physical BRAM      |                                                 |
+ |  +--------------------+                                                 |
  +-------------------------------------------------------------------------+
 ```
+
+**Note on the softcore:** an earlier design used a Hazard5 RISC-V core
+(`rtl/hazard5_soc.v`, still present in the repo) for this role; it was
+replaced by the smaller FemtoRV32 "quark" core (`rtl/femtorv_service_soc.v`)
+running C firmware (`firmware/femtorv_service_main.c`) against a vendored
+PetitFatFS. Hazard5 remains in the file list but is not instantiated by the
+current default top-level build. The `H5_SIDEBAND_EN` parameter name in
+`rtl/atari_cart_top.v` is a holdover from that era -- it now gates the
+FemtoRV path.
+
+**Note on cart RAM:** the menu ROM and the loaded game deliberately share the
+same physical BRAM (there wasn't room for a separate execution-source BSRAM
+alongside the 48KB game-RAM array) -- see "Handover Protocol Details" below
+for why this matters and how the handoff is made safe.
 
 ---
 
@@ -41,7 +58,7 @@ FPGA hardware debugging over USB/JTAG is slow and unobservable. When a bug occur
 ### How Verilator Solves This:
 1. **Cycle-Exact Virtual Atari Bus**: In `sim/tb_cart.cpp`, Verilator compiles all Verilog modules (`atari_cart_top.v`, `pokey_synth.v`, `hazard5_soc.v`, `mapper_supergame.v`, `spi_sd.v`) into a high-speed C++ binary that simulates 6502 CPU cycles in milliseconds.
 2. **100% Signal Visibility**: Every internal signal, bus handshake, state machine bit, and RISC-V register can be inspected or dumped into VCD waveform traces (`sim_trace.vcd`) viewable in GTKWave.
-3. **Software & Firmware Co-Verification**: We compile actual RISC-V C code (`firmware/main.c`) with `riscv64-elf-gcc` and test that the softcore initializes SD SPI, reads `.a78` headers, and populates cartridge BRAM in simulation **before touch silicon**.
+3. **Software & Firmware Co-Verification**: We compile actual RISC-V C code (`firmware/femtorv_service_main.c`, running on the FemtoRV32 "quark" core) with `riscv64-elf-gcc` and test that the softcore initializes the SD card via `rtl/sd_controller.v`, scans the FAT32 filesystem, reads `.a78` headers, and populates cartridge BRAM in simulation **before touching silicon**.
 4. **Golden Rule**: We only program the real Tang Nano 9K when 100% of our simulation test suite passes!
 
 ---
@@ -106,30 +123,67 @@ Detailed integration plan (synthesis-safe):
 
 `docs/SD_FAT_ARCHITECTURE_PLAN.md`
 
-### SD Init Failure Codes
+### Status/Stage Codes (`CART_CSR_STATUS`, current as of `femtorv_service_main.c`/`diskio_glue.c`)
 
-- `0xF0`: CMD0 did not return Idle (`R1=0x01` expected)
-- `0xF1`: CMD8 failed or returned invalid voltage/check pattern
-- `0xF2`: ACMD41 timed out (card never left idle)
-- `0xF3`: CMD58 (OCR read) failed
-- `0xF4`: CMD16 (set 512-byte block length) failed on SDSC path
+The `0xF0-0xF4` codes previously documented here belonged to an earlier
+software-SPI init sequence (`rtl/spi_sd.v`) that's since been replaced by the
+hardware `rtl/sd_controller.v` block-read engine, which handles CMD0/CMD8/
+CMD55/ACMD41 init autonomously. The current stage codes are:
+
+- `0x11`: hardware SD controller signaled ready (`disk_initialize` success)
+- `0x12`: sector read requested (`disk_readp`)
+- `0x13`-`0x1C`: FAT mount/directory-scan progress (opendir, readdir loop,
+  per-file header read, scan complete)
+- `0x20`-`0x22`: game-load progress (`load_game()`: file open, header read,
+  bulk copy loop)
+- `0x60`: disk init failed during scan
+- `0x62`: mount failed during scan
+- `0x69`: SD read error during header/payload read
+- `0x6A`: requested file could not be opened
+- `0x80`: load complete, ready for handoff (bit 7 set -- this is what
+  `menu.bas`'s handoff loop polls `$7FF0` for)
+
+The LED blink-code diagnostic in `rtl/atari_cart_top.v` (`status_blink_code`)
+maps the high nibble of a subset of these to a repeating blink count, useful
+for reading status without a screen/serial connection.
 
 ### Why This Matters
 
 1. Distinguishes transport/init failures from FAT or `.a78` parser issues.
-2. Makes SDHC-vs-SDSC addressing problems visible early.
-3. Keeps simulation aligned with hardware by checking the same command sequence (CMD0/CMD8/ACMD41/CMD58, and CMD16 when required).
+2. Keeps simulation aligned with hardware by exercising the same command sequence through `sd_controller.v` in both `sim/tb_cart.cpp`'s `SimSDCard` model and real hardware.
 
 
 
 
-## ✅ Current Milestone (AstroWing Parity)
+## ✅ Current Milestone (Dynamic SD-Card Load, Confirmed On Real Hardware)
 
-AstroWing now has parity across emulator, simulation, and hardware checks:
+As of 2026-09-09 (commit `c6a5272`, branch `LinearCartSupport`), confirmed on
+a real Tang Nano 9K -- not just in simulation:
 
-1. The instrumented A7800 build runs AstroWing fully, including POKEY audio.
-2. Emulator-exported bus traces replay in Verilator with boot assertions passing.
-3. Real hardware testing reports AstroWing behavior matching expected gameplay.
+1. The menu boots, scans the SD card's FAT32 filesystem via the
+   FemtoRV32/PetitFatFS/`sd_controller.v` path, and displays discovered
+   `.a78` game titles.
+2. Pressing fire triggers a full 48KB SD-card load of `astrowing.a78` into
+   cart RAM.
+3. The loaded game boots and plays correctly, including POKEY audio.
+
+This replaces an earlier, narrower "AstroWing parity" milestone that covered
+emulator/trace-replay/hardware checks for a single statically-baked-in
+cartridge image with no SD card involved at all. That path (see
+`docs/V1_HARDWARE_CONTRACT.md`, now marked superseded) is no longer the
+project's architecture.
+
+Getting here required fixing a real, non-obvious bug: the menu ROM and any
+loaded game share the same physical BRAM (see the architecture note above),
+so a naive handoff loop that kept calling 7800basic's `restorescreen`/
+`drawscreen` kernel routines while the SD load was in progress caused the
+still-running menu's own code to be overwritten mid-execution once the copy
+reached the last ~8KB of a 48K linear cart -- confirmed via a real-hardware
+video recording showing on-screen corruption starting almost exactly when
+the transfer would reach that region. The fix (see `menu/menu.bas`'s
+`select_game` handoff logic) runs the entire wait-for-load loop from scratch
+RAM with MARIA DMA disabled, so nothing touches cart ROM until the freshly
+loaded game's own reset vector is jumped to.
 
 ## 📋 v1 Hardware Contract + Bring-Up Checklist
 
@@ -167,27 +221,34 @@ The Multi-Cart V3 features an integrated menu system compiled with 7800basic (`m
                                          |
                                          v
 +-----------------------------------------------------------------------------------+
-| 2. Tang Nano 9K FPGA & Hazard5 Softcore                                          |
+| 2. Tang Nano 9K FPGA & FemtoRV32 "quark" Softcore                                 |
 |    - Detects write to $2200 (Bit 7 = 1 signals ROM load request)                  |
-|    - Hazard5 RISC-V softcore fetches requested ROM data from SD card / Flash      |
-|    - Streams ROM payload directly into Dual-Port Cartridge B-SRAM                  |
+|    - FemtoRV32 + PetitFatFS fetches requested .a78 from the SD card               |
+|    - Streams ROM payload directly into the shared Cartridge B-SRAM                |
 +-----------------------------------------------------------------------------------+
                                          |
                                          v
 +-----------------------------------------------------------------------------------+
-| 3. Handover & Reset Execution                                                     |
-|    - 6502 CPU polls status register at $7FF0 until bit 7 signals load complete     |
-|    - 6502 copies a 6-byte Zero-Page stub to ZP RAM ($80-$85):                    |
-|         sta $2200  ; Acknowledge handover ($A5)                                  |
-|         jmp ($FFFC) ; Jump to new game reset vector                              |
-|    - 6502 jumps to $80, acknowledging handover and launching selected ROM         |
+| 3. Handover & Reset Execution (runs entirely from scratch RAM, NOT cart ROM --    |
+|    see the shared-BRAM note above: the menu's own code lives in the same          |
+|    memory being overwritten by the load, so nothing here can touch cart ROM)      |
+|    - 6502 disables MARIA DMA (sta $3C, #0) so it stops rendering from the         |
+|      memory being overwritten                                                     |
+|    - 6502 copies the ENTIRE wait+handoff routine to scratch RAM at $2210+         |
+|      (not zero page -- $80-$91 collides with 7800basic's own dlendsave            |
+|      kernel array) and jumps there to run it:                                     |
+|         lda $7FF0        ; poll FPGA status register                             |
+|         cmp #$80          ; loop until exactly "ready"                            |
+|         bne .wait_loaded                                                          |
+|         lda #$A5 : sta $2200  ; acknowledge handover                              |
+|         jmp ($FFFC)           ; jump to new game reset vector                     |
 +-----------------------------------------------------------------------------------+
 ```
 
 ### Handover Protocol Details:
 1. **Triggering Load**: The 7800 menu writes `selected_game + 128` to `$2200`. Bit 7 indicates an active load request.
-2. **Status Polling**: While B-SRAM is populated, the 6502 loops polling status register `$7FF0` (`lda $7FF0` / `bpl .keep_waiting`).
-3. **Zero-Page Handover Stub**: Once `$7FF0` returns negative (load complete), the 6502 copies a 6-byte stub into Zero-Page RAM `$80`, stores `#$A5` to `$2200` to acknowledge handover, and executes `jmp ($FFFC)` to launch the newly loaded ROM directly from B-SRAM.
+2. **Shared BRAM constraint**: the menu ROM and the loaded game occupy the same physical BRAM chunks (Atari `$E000-$FFFF`), since both didn't fit at once. `load_game()` overwrites that entire range as its copy reaches the end of a 48K linear cart -- including the memory the menu is still executing from. So from the trigger write onward, nothing can execute out of cart ROM until the new game's reset vector is jumped to.
+3. **Scratch-RAM wait+handoff routine**: the 6502 disables MARIA DMA, then copies the *entire* poll-and-handoff routine (not just the final jump) into scratch RAM at `$2210+` and runs it from there -- it has to keep running even after the menu's own compiled code gets overwritten by the tail of the transfer. It polls `$7FF0` for an exact `$80` ("ready"), then stores `#$A5` to `$2200` to acknowledge handover and executes `jmp ($FFFC)` to launch the newly loaded ROM. See `menu/menu.bas`'s `select_game` label for the current, working implementation and its in-line comments for the full story (including why an earlier zero-page-`$80` version of this stub caused a crash: it collided with 7800basic's own `dlendsave` kernel save-buffer array).
 
 ---
 

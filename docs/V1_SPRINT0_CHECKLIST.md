@@ -1,5 +1,12 @@
 # V1 Sprint 0 Checklist (M0 BIOS Milestone)
 
+## Status: superseded (updated 2026-09-09)
+This M0 milestone (reach the BIOS screen with a static cart image) was
+completed long ago. The project has since moved through dynamic SD-card
+`.a78` loading and, as of 2026-09-09 (commit `c6a5272`), confirmed loading
+and running a game from the SD card on real hardware. Kept as a historical
+record only.
+
 Objective:
 
 1. Get Tang 9K V3 core to reach Atari 7800 BIOS screen on real hardware.

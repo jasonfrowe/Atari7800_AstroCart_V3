@@ -72,7 +72,13 @@ module atari_cart_top #(
 
     // Console warm-reset assist: if PHI2 disappears for a long window,
     // force an internal reset pulse so the cart cleanly re-initializes when PHI2 returns.
-    reg [19:0] phi2_idle_ctr = 20'd0;
+    // Widened from 20 bits (~38.8ms @ 27MHz) to 25 bits (~1.24s): the shorter
+    // window could be spuriously tripped by a brief PHI2 hiccup right as the
+    // Atari's own oscillator stabilizes at power-on, force-resetting the
+    // whole SoC (wiping out an in-progress or just-finished SD scan/load)
+    // seconds into normal operation -- long after cart RAM already has stale
+    // menu titles displayed from the scan that ran before that reset fired.
+    reg [24:0] phi2_idle_ctr = 25'd0;
     reg [11:0] warm_rst_ctr  = 12'd0;
     reg        warm_rst_n    = 1'b0;
 
@@ -111,11 +117,11 @@ module atari_cart_top #(
 
     always @(posedge clk) begin
         if (phi2_rise)
-            phi2_idle_ctr <= 20'd0;
-        else if (phi2_idle_ctr != 20'hFFFFF)
+            phi2_idle_ctr <= 25'd0;
+        else if (phi2_idle_ctr != 25'h1FFFFFF)
             phi2_idle_ctr <= phi2_idle_ctr + 1'b1;
 
-        if (phi2_idle_ctr == 20'hFFFFF) begin
+        if (phi2_idle_ctr == 25'h1FFFFFF) begin
             warm_rst_n   <= 1'b0;
             warm_rst_ctr <= 12'd0;
         end else if (!warm_rst_n) begin
@@ -124,6 +130,18 @@ module atari_cart_top #(
             else
                 warm_rst_n <= 1'b1;
         end
+    end
+
+    // DIAGNOSTIC: counts every time the warm-reset watchdog fires. This
+    // register is NOT reset by warm_rst_n itself (only by the one-shot POR),
+    // so it survives across any number of warm resets and lets us tell
+    // "core reset once at boot" apart from "core keeps getting reset".
+    reg [3:0] warm_reset_count = 4'd0;
+    reg       warm_rst_n_prev  = 1'b1;
+    always @(posedge clk) begin
+        warm_rst_n_prev <= warm_rst_n;
+        if (warm_rst_n_prev && !warm_rst_n && (warm_reset_count != 4'hF))
+            warm_reset_count <= warm_reset_count + 1'b1;
     end
 
     // ------------------------------------------------------------------------
@@ -158,6 +176,7 @@ module atari_cart_top #(
     wire [7:0]  boot_rdata;
     wire        boot_busy;
     wire        svc_clk;
+    wire        sideband_pll_lock;
 
     // Exported status signal for simulation testbench
     wire [7:0] soc_status_val /* verilator public */ = sideband_status_val;
@@ -176,6 +195,7 @@ module atari_cart_top #(
             wire [12:0] svc_boot_raddr;
             wire        svc_boot_busy;
             wire        svc_clk_out;
+            wire        svc_pll_lock;
 
             femtorv_service_soc #(
                 .FIRMWARE_HEX(FW_INIT_FILE)
@@ -206,7 +226,8 @@ module atari_cart_top #(
                 .O_psram_cs_n  (O_psram_cs_n),
                 .IO_psram_rwds (IO_psram_rwds),
                 .IO_psram_dq   (IO_psram_dq),
-                .clk_81m_out   (svc_clk_out)
+                .clk_81m_out   (svc_clk_out),
+                .pll_lock_out  (svc_pll_lock)
             );
 
             assign sideband_sd_cs        = svc_sd_cs;
@@ -221,6 +242,7 @@ module atari_cart_top #(
             assign boot_raddr            = svc_boot_raddr;
             assign boot_busy             = svc_boot_busy;
             assign svc_clk               = svc_clk_out;
+            assign sideband_pll_lock     = svc_pll_lock;
         end else begin : gen_no_h5_sideband
             assign sideband_sd_cs        = 1'b1;
             assign sideband_sd_mosi      = 1'b0;
@@ -234,6 +256,7 @@ module atari_cart_top #(
             assign boot_raddr            = 13'd0;
             assign boot_busy             = 1'b0;
             assign svc_clk               = clk;
+            assign sideband_pll_lock     = 1'b1;
             assign O_psram_ck            = 1'b0;
             assign O_psram_ck_n          = 1'b0;
             assign O_psram_cs_n          = 1'b1;
@@ -245,6 +268,22 @@ module atari_cart_top #(
     assign sd_cs   = sideband_sd_cs;
     assign sd_mosi = sideband_sd_mosi;
     assign sd_clk  = sideband_sd_clk;
+
+    // DIAGNOSTIC: counts every time the femtorv_service_soc PLL lock drops.
+    // soc_rst_n inside that module is (rst_n & pll_lock) -- a lock glitch
+    // resets that WHOLE SoC (status_val, boot_busy, everything) completely
+    // independently of core_rst_n/warm_rst_n, so warm_reset_count above
+    // cannot see it at all. sideband_pll_lock crosses from the femtorv
+    // service's own clk_81m-adjacent logic, so it's double-synchronized here.
+    reg [1:0] pll_lock_sync = 2'b11;
+    reg       pll_lock_prev = 1'b1;
+    reg [3:0] pll_unlock_count = 4'd0;
+    always @(posedge clk) begin
+        pll_lock_sync <= {pll_lock_sync[0], sideband_pll_lock};
+        pll_lock_prev <= pll_lock_sync[1];
+        if (pll_lock_prev && !pll_lock_sync[1] && (pll_unlock_count != 4'hF))
+            pll_unlock_count <= pll_unlock_count + 1'b1;
+    end
 
     // Dynamic POKEY and Mapper configuration (from A78 header via FemtoRV)
     reg        pokey_cfg_enable;
@@ -464,14 +503,85 @@ module atari_cart_top #(
     end
 
     // ------------------------------------------------------------------------
-    // Status LEDs
+    // Status LEDs -- DEBUG LAYOUT, blink-coded (a 6-bit binary snapshot is too
+    // easy to misread, especially if any bit is toggling fast enough to look
+    // dim/off to the eye instead of clearly on).
+    //
+    // led[4] = slow 1Hz heartbeat -- steady blink proves the clock is alive.
+    //          If this ISN'T blinking, none of the rest means anything.
+    // led[5] = the firmware status "stage" blinked out as a repeating count,
+    //          re-sampled fresh at the start of every cycle, separated by a
+    //          long pause so you can tell where one count ends and the next
+    //          begins:
+    //            1 blink  = idle / load_game() never ran
+    //            2 blinks = still in run_fat_scan() (titles being scanned)
+    //            3 blinks = load_game() running (opened file / copying)
+    //            4 blinks = A78 header validation error
+    //            5 blinks = disk/mount/open/read error
+    //            6 blinks = ready (0x80) -- waiting on the game_mode ack
+    //            7 blinks = anything else / unexpected value
+    // led[0:3] are unused (off) in this layout.
     // ------------------------------------------------------------------------
-    assign led[0] = ~sideband_status_val[7];
-    assign led[1] = ~trigger_val_sideband[7];
-    assign led[2] = ~trigger_val_sideband[0];
-    assign led[3] = ~game_mode;
-    assign led[4] = ~boot_busy;
-    assign led[5] = ~(halt ^ phi2_high ^ rw_is_read);
+    reg [23:0] heartbeat_ctr = 24'd0;
+    reg        heartbeat_led = 1'b0;
+    localparam [23:0] HEARTBEAT_HALF = 24'd13_500_000; // ~0.5s @ 27MHz
+    always @(posedge clk) begin
+        if (heartbeat_ctr >= HEARTBEAT_HALF) begin
+            heartbeat_ctr <= 24'd0;
+            heartbeat_led <= ~heartbeat_led;
+        end else begin
+            heartbeat_ctr <= heartbeat_ctr + 1'b1;
+        end
+    end
+
+    function [2:0] status_blink_code;
+        input [3:0] nibble;
+        begin
+            case (nibble)
+                4'h0:    status_blink_code = 3'd1;
+                4'h1:    status_blink_code = 3'd2;
+                4'h2:    status_blink_code = 3'd3;
+                4'h5:    status_blink_code = 3'd4;
+                4'h6:    status_blink_code = 3'd5;
+                4'h8:    status_blink_code = 3'd6;
+                default: status_blink_code = 3'd7;
+            endcase
+        end
+    endfunction
+
+    localparam [25:0] BLINK_HALF = 26'd8_100_000;  // ~0.3s @ 27MHz (on or off)
+    localparam [25:0] GAP_LEN    = 26'd40_500_000; // ~1.5s @ 27MHz pause between cycles
+
+    reg [25:0] blink_phase_timer   = 26'd0;
+    reg [3:0]  blink_halves_done   = 4'd0;
+    reg [2:0]  blink_target        = 3'd0;
+    reg        blink_out           = 1'b0;
+    wire [3:0] blink_target_halves = {blink_target, 1'b0}; // 2 * blink_target
+
+    always @(posedge clk) begin
+        if (blink_halves_done < blink_target_halves) begin
+            if (blink_phase_timer >= BLINK_HALF) begin
+                blink_phase_timer <= 26'd0;
+                blink_halves_done <= blink_halves_done + 1'b1;
+                blink_out         <= ~blink_out;
+            end else begin
+                blink_phase_timer <= blink_phase_timer + 1'b1;
+            end
+        end else begin
+            blink_out <= 1'b0;
+            if (blink_phase_timer >= GAP_LEN) begin
+                blink_phase_timer <= 26'd0;
+                blink_halves_done <= 4'd0;
+                blink_target      <= status_blink_code(sideband_status_val[7:4]);
+            end else begin
+                blink_phase_timer <= blink_phase_timer + 1'b1;
+            end
+        end
+    end
+
+    assign led[3:0] = 4'b1111;
+    assign led[4]   = ~heartbeat_led;
+    assign led[5]   = ~blink_out;
 
 endmodule
 

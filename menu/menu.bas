@@ -141,35 +141,39 @@ flash_loop
  flash_count = flash_count - 1
  if flash_count > 0 then goto flash_loop
  
- asm
-   sei
+ ; Trigger FPGA: bit 7 marks the write as a load request; low bits pick the slot.
+ fpga_trigger = selected_game + 128
 
-   ; Copy 18-byte handover stub to Zero-Page RAM ($80-$91)
+ ; Wait for load to finish (poll $7FF0), same structure as the last known-good
+ ; handoff: stay in normal 7800basic execution (restorescreen/drawscreen keep
+ ; running every frame, so NMI/kernel housekeeping and the display both keep
+ ; working normally) instead of parking in a disabled-DMA busy loop for the
+ ; whole SD transfer.
+wait_loop
+ restorescreen
+ drawscreen
+ asm
+   lda $7FF0
+   bpl .keep_waiting
+
+   ; Copy 6-byte ack+jump stub to scratch RAM at $2210, NOT zero page: $0082
+   ; is 7800basic's own dlendsave kernel save-buffer array, live RAM that
+   ; restorescreen/savescreen depend on. $2210 is unused scratch RAM instead.
    ldx #0
 .copy_handover_stub
    lda .handover_stub_code,x
-   sta $80,x
+   sta $2210,x
    inx
-   cpx #18
+   cpx #6
    bcc .copy_handover_stub
 
-   ; Disable MARIA DMA so Maria doesn't access Cart RAM while SD card is loading
-   lda #0
-   sta $3C
-
-   ; Pass selected_game + 128 in accumulator A and jump to Zero-Page RAM
-   lda selected_game
-   ora #$80
-   jmp $80
+   lda #$A5
+   jmp $2210
 
 .handover_stub_code
-   sta $2200        ; $80: Trigger load on FPGA / FemtoRV
-.wait_loaded
-   lda $7FF0        ; $83: Poll FPGA status register
-   sta $20          ; $86: Visual feedback: display status on TV background color!
-   bpl .wait_loaded ; $88: Loop until bit 7 is set (game loaded)
-   lda #$A5         ; $8A: Acknowledge byte
-   sta $2200        ; $8C: Switch FPGA to game mode immediately
-   jmp ($FFFC)      ; $8F: Jump to new game reset vector
+   sta $2200
+   jmp ($FFFC)
+
+.keep_waiting
 end
- return
+ goto wait_loop

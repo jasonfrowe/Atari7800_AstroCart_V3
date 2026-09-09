@@ -2,7 +2,8 @@
 // Module: femtorv_service_soc
 // Description: FemtoRV32 service plane with PSRAM execution, SD/FAT streaming,
 //              cartridge RAM write port, and dual-port metadata window.
-//              Consumes ZERO BSRAM blocks (firmware in PSRAM, metadata in LUTs).
+//              Firmware runs from PSRAM; the only BSRAM this module uses is
+//              the 512-byte SD sector capture buffer (sd_buffer).
 // ============================================================================
 
 `default_nettype none
@@ -46,7 +47,13 @@
     inout  wire [7:0]  IO_psram_dq,
 
     // 81 MHz clock output for Cartridge Game RAM clocking
-    output wire        clk_81m_out
+    output wire        clk_81m_out,
+
+    // DIAGNOSTIC: exposes the PLL lock signal so the top level can detect
+    // any lock glitch, which would silently reset this whole SoC (status,
+    // boot state, everything) via soc_rst_n without going through the
+    // top-level warm-reset watchdog at all.
+    output wire        pll_lock_out
 );
 
     // ------------------------------------------------------------------------
@@ -65,6 +72,7 @@
     );
 
     assign clk_81m_out = clk_81m;
+    assign pll_lock_out = pll_lock;
     wire soc_rst_n = rst_n & pll_lock;
 
     // ------------------------------------------------------------------------
@@ -79,7 +87,7 @@
     wire        psram_busy;
 
     PsramController #(
-        .FREQ   (81_000_000),
+        .FREQ   (54_000_000), // matches gowin_pll's reduced clk_81m rate (see gowin_pll.v)
         .LATENCY(3)
     ) u_psram_ctrl (
         .clk          (clk_81m),
@@ -134,10 +142,12 @@
     reg         mem_wbusy;
 
     wire is_psram    = (mem_addr[31:28] == 4'h0);
-    wire is_spi      = (mem_addr[31:28] == 4'h4);
     wire is_csr      = (mem_addr[31:28] == 4'hC);
     wire is_cart_ram = (mem_addr[31:28] == 4'hD);
     wire is_meta     = (mem_addr[31:28] == 4'hE);
+    wire is_sdblk    = (mem_addr[31:28] == 4'h5);
+    wire is_sdbuf    = is_sdblk && !mem_addr[9];   // 0x5000_0000-0x5000_01FF: 512-byte sector buffer
+    wire is_sdctrl   = is_sdblk &&  mem_addr[9];   // 0x5000_0200+: LBA/trigger/status registers
 
     // ------------------------------------------------------------------------
     // FemtoRV <-> PSRAM Bridge Signals
@@ -167,27 +177,49 @@
     end
 
     // ------------------------------------------------------------------------
-    // SPI MicroSD Controller (81 MHz)
+    // Hardware SD block-read controller (ported from AstroCart V2, proven on
+    // this exact board). Runs entirely in the clk_81m domain -- V2 needed a
+    // separate clk_sd domain with cross-domain synchronizers only because it
+    // shared the controller across two different clocks; here everything
+    // (sd_controller, the byte-capture buffer, and the MMIO logic below) is
+    // single-clock, so no CDC synchronizers are needed for these signals.
+    // sd_controller.v internally handles the entire SD init sequence
+    // (CMD0/CMD8/CMD55/CMD41) and a full 512-byte sector read autonomously;
+    // firmware just supplies an LBA, pulses the trigger, and reads the
+    // resulting bytes back out of sd_buffer[].
     // ------------------------------------------------------------------------
-    reg        spi_cs_req;
-    reg        spi_we_req;
-    reg [1:0]  spi_addr_req;
-    reg [7:0]  spi_wdata_req;
-    wire [7:0] spi_rdata;
+    reg  [31:0] sd_lba_reg;
+    reg         sd_rd_req;
+    reg         sd_op_busy;
+    reg         sd_byte_avail_prev;
+    wire        sd_ready_w;
+    wire [7:0]  sd_dout_w;
+    wire        sd_byte_avail_w;
 
-    (* keep = "true", syn_keep = 1 *) spi_sd u_spi (
-        .clk     (clk_81m),
-        .rst_n   (soc_rst_n),
-        .cs      (spi_cs_req),
-        .we      (spi_we_req),
-        .addr    (spi_addr_req),
-        .wdata   (spi_wdata_req),
-        .rdata   (spi_rdata),
-        .sd_cs   (sd_cs),
-        .sd_mosi (sd_mosi),
-        .sd_miso (sd_miso),
-        .sd_clk  (sd_clk)
+    sd_controller u_sd (
+        .cs                  (sd_cs),
+        .mosi                (sd_mosi),
+        .miso                (sd_miso),
+        .sclk                (sd_clk),
+        .rd                  (sd_rd_req),
+        .dout                (sd_dout_w),
+        .byte_available      (sd_byte_avail_w),
+        .wr                  (1'b0),
+        .din                 (8'h00),
+        .ready_for_next_byte (),
+        .reset               (!soc_rst_n),
+        .ready               (sd_ready_w),
+        .address             (sd_lba_reg),
+        .clk                 (clk_81m),
+        .status              (),
+        .recv_data           ()
     );
+
+    reg [9:0] sd_buf_widx;
+    reg [7:0] sd_buffer [0:511];
+    // sd_buf_widx/sd_buffer writes happen inside the main FSM always block
+    // below (reset + trigger-restart + byte-capture all live there, so
+    // sd_buf_widx has exactly one driver).
 
     // ------------------------------------------------------------------------
     // FemtoRV32 Processor Core
@@ -207,7 +239,7 @@
         .reset    (femtorv_rst_n)
     );
 
-    assign cpu_probe = {mem_rstrb, (|mem_wmask), mem_addr[4:0], spi_rdata[0]};
+    assign cpu_probe = {mem_rstrb, (|mem_wmask), mem_addr[4:0], sd_byte_avail_w};
 
     // ------------------------------------------------------------------------
     // Main FSM: DMA Bootloader + FemtoRV PSRAM Arbitration + MMIO
@@ -216,9 +248,10 @@
     reg [2:0]  mmio_rd_src;
     reg [31:0] mmio_rd_addr;
 
-    localparam [2:0] MMIO_NONE = 3'd0;
-    localparam [2:0] MMIO_SPI  = 3'd1;
-    localparam [2:0] MMIO_CSR  = 3'd2;
+    localparam [2:0] MMIO_NONE  = 3'd0;
+    localparam [2:0] MMIO_CSR   = 3'd2;
+    localparam [2:0] MMIO_SDBUF = 3'd3;
+    localparam [2:0] MMIO_SDCTL = 3'd4;
 
     always @(posedge clk_81m or negedge soc_rst_n) begin
         if (!soc_rst_n) begin
@@ -254,16 +287,46 @@
             cart_ram_addr   <= 16'd0;
             cart_ram_wdata  <= 8'h00;
 
-            spi_cs_req      <= 1'b0;
-            spi_we_req      <= 1'b0;
-            spi_addr_req    <= 2'b00;
-            spi_wdata_req   <= 8'h00;
+            sd_lba_reg      <= 32'd0;
+            sd_rd_req       <= 1'b0;
+            sd_op_busy      <= 1'b0;
+            sd_byte_avail_prev <= 1'b0;
+            sd_buf_widx     <= 10'd0;
             mmio_rd_pending <= 1'b0;
             mmio_rd_src     <= MMIO_NONE;
             mmio_rd_addr    <= 32'd0;
         end else begin
             cart_ram_we <= 1'b0;
-            spi_we_req  <= 1'b0;
+
+            // SD hardware controller: capture each streamed byte into the
+            // sector buffer, and detect the read-complete edge (sd_ready
+            // rising again after having gone low) to clear the busy/request
+            // latches. Runs unconditionally; harmless during boot_busy since
+            // no read is ever triggered until firmware starts.
+            //
+            // sd_byte_avail_w is a LEVEL, not a pulse: sd_controller.v only
+            // updates it on its own internal clock_enable-gated ticks (which
+            // fire far less often than every clk_81m cycle), so it stays
+            // high across many clk_81m cycles per byte. Must edge-detect it
+            // here, or every one of those cycles re-captures the same byte
+            // and corrupts the whole buffer.
+            sd_byte_avail_prev <= sd_byte_avail_w;
+            if (sd_byte_avail_w && !sd_byte_avail_prev) begin
+                sd_buffer[sd_buf_widx[8:0]] <= sd_dout_w;
+                sd_buf_widx            <= sd_buf_widx + 1'b1;
+            end
+            // "Done" is the 512th captured byte, NOT sd_ready_w rising: the
+            // latter can (and does) go high slightly before the very last
+            // byte has actually landed in sd_buffer, since sd_controller.v's
+            // internal state can reach IDLE a cycle or two ahead of when
+            // this capture logic reacts to the last byte_available edge --
+            // firmware would then read stale/uninitialized tail bytes.
+            // Tying completion to the byte counter itself can't race with
+            // the capture it's counting.
+            if (sd_op_busy && (sd_buf_widx == 10'd512)) begin
+                sd_rd_req  <= 1'b0;
+                sd_op_busy <= 1'b0;
+            end
 
             // ================================================================
             // PHASE 1: DMA Bootloader (Game RAM -> PSRAM)
@@ -352,11 +415,6 @@
                         cart_ram_we    <= 1'b1;
                         cart_ram_addr  <= mem_addr[15:0];
                         cart_ram_wdata <= mem_wdata[7:0];
-                    end else if (is_spi) begin
-                        spi_cs_req    <= 1'b1;
-                        spi_we_req    <= 1'b1;
-                        spi_addr_req  <= mem_addr[3:2];
-                        spi_wdata_req <= mem_wdata[7:0];
                     end else if (is_csr) begin
                         case (mem_addr[5:2])
                             4'h1: status_val <= mem_wdata[7:0];
@@ -364,6 +422,21 @@
                             4'h4: debug1     <= mem_wdata[7:0];
                             4'h5: debug2     <= mem_wdata[7:0];
                             4'h6: config_val <= mem_wdata[7:0];
+                            default: ;
+                        endcase
+                    end else if (is_sdctrl) begin
+                        case (mem_addr[5:2])
+                            4'h0: sd_lba_reg[7:0]   <= mem_wdata[7:0];
+                            4'h1: sd_lba_reg[15:8]  <= mem_wdata[7:0];
+                            4'h2: sd_lba_reg[23:16] <= mem_wdata[7:0];
+                            4'h3: sd_lba_reg[31:24] <= mem_wdata[7:0];
+                            4'h4: begin
+                                // Kick off a hardware sector read using the
+                                // LBA assembled via the four writes above.
+                                sd_rd_req   <= 1'b1;
+                                sd_op_busy  <= 1'b1;
+                                sd_buf_widx <= 10'd0;
+                            end
                             default: ;
                         endcase
                     end
@@ -374,19 +447,17 @@
                     mem_rbusy       <= 1'b1;
                     mmio_rd_pending <= 1'b1;
                     mmio_rd_addr    <= mem_addr;
-                    if (is_spi) begin
-                        spi_cs_req   <= 1'b1;
-                        spi_we_req   <= 1'b0;
-                        spi_addr_req <= mem_addr[3:2];
-                        mmio_rd_src  <= MMIO_SPI;
-                    end else if (is_csr) begin
+                    if (is_csr) begin
                         mmio_rd_src  <= MMIO_CSR;
+                    end else if (is_sdbuf) begin
+                        mmio_rd_src  <= MMIO_SDBUF;
+                    end else if (is_sdctrl) begin
+                        mmio_rd_src  <= MMIO_SDCTL;
                     end else begin
                         mmio_rd_src  <= MMIO_NONE;
                     end
                 end else if (mmio_rd_pending) begin
                     case (mmio_rd_src)
-                        MMIO_SPI: mem_rdata <= {24'h0, spi_rdata};
                         MMIO_CSR: begin
                             case (mmio_rd_addr[5:2])
                                 4'h1: mem_rdata <= {24'h0, status_val};
@@ -398,6 +469,21 @@
                                 default: mem_rdata <= 32'h0;
                             endcase
                         end
+                        // femtorv32_quark's LBU picks its byte out of mem_rdata
+                        // using mem_addr[1:0] as a lane select (see LOAD_byte /
+                        // LOAD_halfword in femtorv32_quark.v) -- it does NOT
+                        // assume byte 0. MMIO_CSR never hit this because every
+                        // CSR address is 4-byte aligned (mem_addr[1:0]==0), but
+                        // SDHW_BUF(i) is byte-addressed across all of 0..511,
+                        // so 3 out of 4 offsets landed on a lane this register
+                        // never populated, reading back as zero. Replicate the
+                        // byte into all four lanes so every alignment works.
+                        MMIO_SDBUF: mem_rdata <= {4{sd_buffer[mmio_rd_addr[8:0]]}};
+                        // bit0 = a firmware-requested sector read is in flight
+                        // bit1 = sd_controller's own ready signal (mirrors its
+                        //        IDLE state -- 0 until its CMD0-CMD41 init
+                        //        sequence completes, independent of bit0)
+                        MMIO_SDCTL: mem_rdata <= {30'h0, sd_ready_w, sd_op_busy};
                         default: mem_rdata <= 32'h0;
                     endcase
                     mmio_rd_pending <= 1'b0;

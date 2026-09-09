@@ -14,6 +14,7 @@ add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/psr
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/pokey_synth.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/audio_pwm.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/spi_sd.v"
+add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/sd_controller.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/gowin_sp_be32.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/gowin_sdpb_mailbox.v"
 add_file -type verilog "/Users/rowe/Software/FPGA/Atari7800_AstroCart_V3/rtl/ip/gowin/gowin_prom/gowin_prom.v"

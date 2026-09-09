@@ -18,8 +18,10 @@ module gowin_pll (
         .FCLKIN("27"),
         .DEVICE("GW1NR-9C"),
         .IDIV_SEL(0),       // Input divider: 27/(0+1) = 27MHz
-        .FBDIV_SEL(2),      // Feedback: 27*3 = 81MHz
-        .ODIV_SEL(8),       // VCO = 81 * 8 = 648MHz
+        .FBDIV_SEL(1),      // Feedback: 27*2 = 54MHz (was 3/81MHz -- dropped
+                             // to test whether FemtoRV/PSRAM timing margin at
+                             // 81MHz was causing silent instruction misexecution)
+        .ODIV_SEL(8),       // VCO = 54 * 8 = 432MHz
         .DYN_SDIV_SEL(2),   // 81 / 2 = 40.5MHz
         .CLKFB_SEL("internal"),
         .CLKOUT_BYPASS("false"),

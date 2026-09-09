@@ -23,7 +23,7 @@
 / Locale and Namespace Configurations
 /---------------------------------------------------------------------------*/
 
-#define PF_USE_LCC		0	/* Allow lower case ASCII and non-ASCII chars */
+#define PF_USE_LCC		1	/* Allow lower case ASCII and non-ASCII chars */
 
 #define	PF_CODE_PAGE	437
 /* The PF_CODE_PAGE specifies the code page to be used on the target system.

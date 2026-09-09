@@ -22,6 +22,7 @@ V_SRC     = $(RTL_DIR)/atari_cart_top.v \
             $(RTL_DIR)/pokey_synth.v \
             $(RTL_DIR)/audio_pwm.v \
             $(RTL_DIR)/spi_sd.v \
+            $(RTL_DIR)/sd_controller.v \
 			$(RTL_DIR)/gowin_sp_be32.v \
 			$(RTL_DIR)/gowin_sdpb_mailbox.v \
             $(RTL_DIR)/hazard5_soc.v \
@@ -69,27 +70,27 @@ $(HEX_FILE): $(A78_FILE) convert_a78.py
 	@echo "==> Converting .a78 payload into $(HEX_FILE)..."
 	$(PYTHON) convert_a78.py $(A78_FILE) $(HEX_FILE)
 
-rom_chunk_00.hex menu_chunk_00.hex menu_4k.hex menu_payload.hex: $(A78_FILE) $(MENU_A78_FILE) convert_a78_split.py $(HEX_FILE)
-	@echo "==> Converting game + menu .a78 payloads into 2KB chunk files and 4KB menu image..."
+rom_chunk_00.hex menu_chunk_00.hex menu_payload.hex: $(A78_FILE) $(MENU_A78_FILE) convert_a78_split.py $(HEX_FILE)
+	@echo "==> Converting game + menu .a78 payloads into 2KB chunk files..."
 	$(PYTHON) convert_a78_split.py $(A78_FILE) $(MENU_A78_FILE)
 
-$(FW_HEX): $(FW_DIR)/main.c $(FW_DIR)/femtorv_service_main.c $(FW_DIR)/crt0.S $(FW_DIR)/link.ld
+$(FW_HEX): $(FW_DIR)/main.c $(FW_DIR)/femtorv_service_main.c $(FW_DIR)/crt0.S $(FW_DIR)/link.ld $(FW_DIR)/petitfatfs/diskio_glue.c $(FW_DIR)/petitfatfs/pff.c
 	@echo "==> Compiling RISC-V C firmware..."
 	$(MAKE) -C $(FW_DIR)
 	cp $(FW_DIR)/firmware.hex $(FW_HEX)
 	cp $(FW_DIR)/femtorv_firmware.hex .
 	cp $(FW_DIR)/femtorv_chunk_*.hex .
 
-obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) rom_chunk_00.hex menu_chunk_00.hex menu_4k.hex menu_payload.hex $(FW_HEX)
+obj_dir/V$(V_TOP): $(V_SRC) $(CPP_TB) rom_chunk_00.hex menu_chunk_00.hex menu_payload.hex $(FW_HEX)
 	@echo "==> Running Verilator and building simulation binary..."
 	$(VERILATOR) $(VERILATOR_FLAGS) $(V_SRC) $(CPP_TB)
 	$(MAKE) -C obj_dir -f V$(V_TOP).mk V$(V_TOP)
 
-run: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex menu_4k.hex menu_payload.hex $(FW_HEX)
+run: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex menu_payload.hex $(FW_HEX)
 	@echo "==> Executing Verilator simulation..."
 	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE)
 
-trace: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex menu_4k.hex menu_payload.hex $(FW_HEX)
+trace: obj_dir/V$(V_TOP) rom_chunk_00.hex menu_chunk_00.hex menu_payload.hex $(FW_HEX)
 	@echo "==> Replaying external Atari bus trace: $(TRACE_FILE)"
 	./obj_dir/Vatari_cart_top --rom-hex $(HEX_FILE) --trace $(TRACE_FILE) $(TRACE_EXTRA_ARGS)
 
@@ -110,7 +111,7 @@ trace-convert:
 	$(PYTHON) a7800_trace_to_replay.py $(CONVERT_INPUT) $(CONVERT_OUTPUT)
 
 clean:
-	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex menu_chunk_*.hex menu_4k.hex menu_payload.hex femtorv_chunk_*.hex femtorv_firmware.hex $(FW_HEX) sim_trace.vcd
+	rm -rf obj_dir $(HEX_FILE) rom_chunk_*.hex menu_chunk_*.hex menu_payload.hex femtorv_chunk_*.hex femtorv_firmware.hex $(FW_HEX) sim_trace.vcd
 	$(MAKE) -C $(FW_DIR) clean
 
 

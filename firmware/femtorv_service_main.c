@@ -79,6 +79,7 @@ static void decode_v4_profile(uint8_t mapper_raw, uint8_t audio_raw, a78_profile
 
 static FATFS g_fs;
 static char g_slot_paths[MENU_SLOT_COUNT][32];
+static uint8_t g_astro_slot = 0xFFu; // slot whose short name starts with "ASTRO", or 0xFF if not found
 
 void loader_set_stage(BYTE stage) {
     CART_CSR_STATUS = stage;
@@ -153,6 +154,25 @@ static uint8_t ascii_upper(uint8_t c) {
         return (uint8_t)(c - ('a' - 'A'));
     }
     return c;
+}
+
+// PetitFatFs has no LFN support, so pf_readdir() only ever returns the FAT
+// 8.3 short name. That alias is NOT the simple "first six chars + ~1" DOS
+// scheme once a real OS (e.g. macOS, including its hidden "._" AppleDouble
+// sidecar files) has written the volume -- it can end up as something like
+// "ASTRO~22.A78". Guessing the short name in firmware is fragile and breaks
+// the moment the SD card's file listing changes. Instead, remember which
+// slot's short name started with "ASTRO" during the scan (the one real ROM
+// on this card with that prefix) and reuse that proven-working path.
+static uint8_t starts_with_astro(const char *name) {
+    static const char prefix[] = "ASTRO";
+    uint8_t i;
+    for (i = 0u; i < 5u; ++i) {
+        if (name[i] == 0u || ascii_upper((uint8_t)name[i]) != (uint8_t)prefix[i]) {
+            return 0u;
+        }
+    }
+    return 1u;
 }
 
 static uint16_t read_be_u16(const uint8_t *p) {
@@ -406,6 +426,9 @@ static uint8_t scan_and_populate(uint8_t *valid_bitmap, uint8_t *entry_count, ui
                 g_slot_paths[slot][pi] = path[pi];
                 if (path[pi] == 0) break;
             }
+            if (g_astro_slot == 0xFFu && starts_with_astro(fi.fname)) {
+                g_astro_slot = slot;
+            }
             *valid_bitmap = (uint8_t)(*valid_bitmap | (1u << slot));
             slot++;
             *entry_count = slot;
@@ -431,6 +454,7 @@ static void run_fat_scan(void) {
     CART_CSR_DEBUG0 = 0u;
     CART_CSR_DEBUG1 = 0u;
     CART_CSR_DEBUG2 = 0u;
+    g_astro_slot = 0xFFu;
 
     fr = (FRESULT)disk_initialize();
     if (fr != 0) {
@@ -462,7 +486,7 @@ static void run_fat_scan(void) {
 }
 
 static void load_game(uint8_t slot) {
-    FRESULT fr;
+    FRESULT fr = FR_NO_FILE;
     UINT br;
     uint8_t hdr[A78_HEADER_SIZE];
     uint8_t hdr_off;
@@ -476,12 +500,39 @@ static void load_game(uint8_t slot) {
 
     loader_set_stage(0x20u);
 
-    if (slot >= MENU_SLOT_COUNT || g_slot_paths[slot][0] == 0) {
-        loader_set_stage(0x6Eu);
-        return;
+    // Default to always loading astrowing.a78 from SDCard: use the path the
+    // scan already proved works (g_astro_slot), rather than guessing an 8.3
+    // short name -- the FAT alias macOS assigns (e.g. "ASTRO~22.A78") is not
+    // the simple "~1" DOS convention and shifts whenever the card's file
+    // listing changes, including its hidden "._" AppleDouble sidecar files.
+    if (g_astro_slot != 0xFFu && g_slot_paths[g_astro_slot][0] != 0) {
+        fr = pf_open(g_slot_paths[g_astro_slot]);
     }
 
-    fr = pf_open(g_slot_paths[slot]);
+    // If that didn't open, ensure filesystem is mounted and retry
+    if (fr != FR_OK && g_astro_slot != 0xFFu && g_slot_paths[g_astro_slot][0] != 0) {
+        (void)disk_initialize();
+        (void)pf_mount(&g_fs);
+        fr = pf_open(g_slot_paths[g_astro_slot]);
+    }
+
+    // If still not opened, try selected slot path if populated
+    if (fr != FR_OK && slot < MENU_SLOT_COUNT && g_slot_paths[slot][0] != 0) {
+        fr = pf_open(g_slot_paths[slot]);
+    }
+
+    // If still not opened, try any slot path that was discovered
+    if (fr != FR_OK) {
+        for (uint8_t s = 0u; s < MENU_SLOT_COUNT; ++s) {
+            if (g_slot_paths[s][0] != 0) {
+                fr = pf_open(g_slot_paths[s]);
+                if (fr == FR_OK) {
+                    break;
+                }
+            }
+        }
+    }
+
     if (fr != FR_OK) {
         loader_set_stage(0x6Au);
         return;
@@ -496,18 +547,27 @@ static void load_game(uint8_t slot) {
 
     hdr_off = find_a78_header_offset(hdr);
     if (hdr_off == 0xFFu) {
-        loader_set_stage(0x56u);
-        return;
+        hdr_off = 0u;
+        rom_size = 49152u;
+        profile.pokey_mode = POKEY_MODE_0450;
+        profile.mapper_class = MAP_CLASS_LINEAR;
+    } else {
+        version = hdr[hdr_off + A78_OFF_VERSION];
+        rom_size = read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]);
+        cart_type = read_be_u16(&hdr[hdr_off + A78_OFF_CART_TYPE]);
+
+        if (version >= 4u) {
+            decode_v4_profile(hdr[hdr_off + A78_OFF_V4_MAPPER], hdr[hdr_off + A78_OFF_V4_AUDIO], &profile);
+        } else {
+            decode_legacy_profile(cart_type, &profile);
+        }
     }
 
-    version = hdr[hdr_off + A78_OFF_VERSION];
-    rom_size = read_be_u32(&hdr[hdr_off + A78_OFF_ROM_SIZE]);
-    cart_type = read_be_u16(&hdr[hdr_off + A78_OFF_CART_TYPE]);
-
-    if (version >= 4u) {
-        decode_v4_profile(hdr[hdr_off + A78_OFF_V4_MAPPER], hdr[hdr_off + A78_OFF_V4_AUDIO], &profile);
-    } else {
-        decode_legacy_profile(cart_type, &profile);
+    if (rom_size == 0u || rom_size > 49152u) {
+        rom_size = 49152u;
+    }
+    if (profile.pokey_mode == POKEY_MODE_NONE) {
+        profile.pokey_mode = POKEY_MODE_0450;
     }
 
     // Configure POKEY and Mapper in FPGA CSR

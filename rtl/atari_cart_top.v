@@ -178,6 +178,20 @@ module atari_cart_top #(
             warm_reset_count <= warm_reset_count + 1'b1;
     end
 
+    // DIAGNOSTIC: does phi2_rise ever actually fire in the clk_cart domain?
+    // If the new clk_cart-domain phi2 sampling is broken, phi2_idle_ctr
+    // above never resets, the watchdog fires repeatedly (~1.66s period),
+    // and femtorv_service_soc gets reset mid-scan every time -- which
+    // would look exactly like "stuck scanning forever, never reaches
+    // ready". warm_reset_count above already answers "has a reset fired
+    // since boot"; this counter answers "is phi2_rise firing at all" --
+    // together they confirm or rule out this specific mechanism.
+    reg [21:0] phi2_activity_ctr = 22'd0;
+    always @(posedge clk_cart) begin
+        if (phi2_rise)
+            phi2_activity_ctr <= phi2_activity_ctr + 1'b1;
+    end
+
     // core_rst_n_cart (clk_cart domain) synchronized back into clk domain
     // for femtorv_service_soc, which stays on clk/svc_clk: async assert,
     // sync deassert.
@@ -665,7 +679,8 @@ module atari_cart_top #(
 
     assign led[0]   = ~cart_pll_lock;
     assign led[1]   = ~cart_hb_led;
-    assign led[3:2] = 2'b11;
+    assign led[2]   = ~(|warm_reset_count);      // ON = at least one warm reset has fired since boot
+    assign led[3]   = ~phi2_activity_ctr[21];    // blinks only if phi2_rise is actually firing
     assign led[4]   = ~heartbeat_led;
     assign led[5]   = ~blink_out;
 

@@ -121,16 +121,33 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     reg [1:0] phi2_pipe;
     reg [2:0] rw_pipe;
-    reg [15:0] a_pipe;
+    reg [15:0] a_pipe0, a_pipe1, a_pipe2;
     reg [15:0] a_sync;
     reg [7:0] d_in_sync;
     reg       phi2_clean;
 
+    // The 2-sample "wait for 2 consecutive matching raw samples" glitch
+    // filter (confirmed necessary via direct hardware A/B test -- see
+    // project memory) guarantees ~1 clk period of settling margin against
+    // real inter-chip-family skew on this board's split address bus (A0-13
+    // via SN74LVC245, A14/15+control via a separate SN74LVC8T245 -- see
+    // PINS.md, no guaranteed phase relationship between them). At the
+    // original 27MHz clk that was ~37ns -- at clk_cart's ~81MHz the same
+    // 2-sample rule only guarantees ~12ns, a real (not just theoretical)
+    // 3x reduction. Confirmed via hardware: the FPGA was caught serving a
+    // wrong byte for the 6502 reset vector ($FFFC/$FFFD), a case whose
+    // very definition (a large, high-bit-count address change on almost
+    // every access) maximizes multi-bit transition/skew risk. Widened to
+    // require 4 consecutive matching samples (3 clk_cart periods, ~37ns),
+    // restoring the same real-time settling margin the working 27MHz
+    // design always had.
     always @(posedge clk_cart) begin
         phi2_pipe <= {phi2_pipe[0], phi2};
         rw_pipe   <= {rw_pipe[1:0], rw};
-        a_pipe    <= a;
-        if (a_pipe == a)
+        a_pipe2   <= a_pipe1;
+        a_pipe1   <= a_pipe0;
+        a_pipe0   <= a;
+        if ((a_pipe0 == a) && (a_pipe1 == a_pipe0) && (a_pipe2 == a_pipe1))
             a_sync <= a;
         d_in_sync <= d;
 

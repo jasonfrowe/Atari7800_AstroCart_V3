@@ -124,9 +124,20 @@
     // atari_cart_top.v's game_ram_raddr comment). A single wait cycle was
     // enough when Port A ran on this same clock; it is not once the
     // address has to cross a synchronizer into an independent domain.
-    // 3 wait cycles (~55ns @ 54MHz) comfortably covers the 2-flop sync
-    // into clk_cart plus 1 BRAM read cycle (~37ns @ 81MHz worst case).
-    reg [1:0]  dma_wait_cnt;
+    // Widened from 3 to 7 wait cycles (~130ns @ 54MHz): a hardware round
+    // with 3 (nominally ~18ns of margin over the ~37ns worst-case 2-flop
+    // sync + BRAM read estimate) still left the SD scan stuck, never
+    // reaching ready, with everything else (both PLLs locking and stable,
+    // phi2_rise firing normally) confirmed healthy via LEDs -- this is the
+    // one remaining new, real-hardware-only crossing Verilator's PLL model
+    // (ties clk_cart to the same edge as clk, zero real skew) cannot
+    // exercise at all, and a marginal case here would read stale/wrong
+    // firmware bytes during the power-on copy to PSRAM, producing exactly
+    // this kind of deterministic (same corruption every boot, since both
+    // PLLs derive from the same crystal with a fixed phase relationship)
+    // "gets partway, then hangs" symptom. Generous margin costs nothing --
+    // one-time ~8KB power-on copy only, no effect on gameplay DMA.
+    reg [2:0]  dma_wait_cnt;
 
     localparam [3:0] DMA_WAIT_INIT = 4'd0;
     localparam [3:0] DMA_R0        = 4'd1;
@@ -269,7 +280,7 @@
             boot_idx        <= 13'd0;
             dma_state       <= DMA_WAIT_INIT;
             dma_calib_cnt   <= 16'd0;
-            dma_wait_cnt    <= 2'd0;
+            dma_wait_cnt    <= 3'd0;
             femtorv_rst_n   <= 1'b0;
 
             psram_read      <= 1'b0;
@@ -359,12 +370,12 @@
 
                     DMA_R0: begin
                         boot_raddr   <= boot_idx;
-                        dma_wait_cnt <= 2'd0;
+                        dma_wait_cnt <= 3'd0;
                         dma_state    <= DMA_R0_WAIT;
                     end
 
                     DMA_R0_WAIT: begin
-                        if (dma_wait_cnt == 2'd2)
+                        if (dma_wait_cnt == 3'd6)
                             dma_state    <= DMA_R1;
                         else
                             dma_wait_cnt <= dma_wait_cnt + 1'b1;
@@ -373,12 +384,12 @@
                     DMA_R1: begin
                         b0           <= boot_rdata;
                         boot_raddr   <= boot_idx + 13'd1;
-                        dma_wait_cnt <= 2'd0;
+                        dma_wait_cnt <= 3'd0;
                         dma_state    <= DMA_R1_WAIT;
                     end
 
                     DMA_R1_WAIT: begin
-                        if (dma_wait_cnt == 2'd2)
+                        if (dma_wait_cnt == 3'd6)
                             dma_state    <= DMA_R2;
                         else
                             dma_wait_cnt <= dma_wait_cnt + 1'b1;

@@ -383,6 +383,19 @@ module atari_cart_top #(
                          (pokey_addr_sel == 2'b11) ? is_pokey_0440 :
                                                      1'b0;
 
+    // DIAGNOSTIC: does the Atari ever actually address menu ROM space
+    // ($E000-$FFFF) at all? menu.bas draws static text before touching
+    // the SD card, so a total black screen means the cart-read datapath
+    // itself (bus sync -> mapper -> BRAM Port A -> output mux -> d, all
+    // now on clk_cart) may be broken independent of SD/firmware status --
+    // this answers "is the 6502 even fetching from cart space" before
+    // chasing anything data-correctness-related.
+    reg [21:0] menu_addr_activity_ctr = 22'd0;
+    always @(posedge clk_cart) begin
+        if (is_menu_addr)
+            menu_addr_activity_ctr <= menu_addr_activity_ctr + 1'b1;
+    end
+
     // SuperGame Bankswitch Mapper Module
     wire [18:0] phys_rom_addr;
 
@@ -679,13 +692,14 @@ module atari_cart_top #(
 
     assign led[0]   = ~cart_pll_lock;
     assign led[1]   = ~cart_hb_led;
-    // led[2]: femtorv_service_soc has its OWN internal PLL (producing
-    // svc_clk) with its own lock-gated reset (soc_rst_n = rst_n & pll_lock,
-    // entirely independent of core_rst_n_cart/core_rst_n_clk/warm reset
-    // above). If that lock ever flickers, it resets the whole SD-scan
-    // state machine mid-scan -- would look exactly like "stuck scanning
-    // forever, never reaches ready". ON = at least one unlock detected.
-    assign led[2]   = ~(|pll_unlock_count);
+    // led[2]: femtorv's own internal-PLL-unlock check came back clean
+    // (confirmed always off in the previous hardware round), so this now
+    // answers a more fundamental question instead: is the 6502 EVER
+    // addressing menu ROM space ($E000-$FFFF) at all? Blinks only if
+    // is_menu_addr goes true regularly -- if it's frozen, the Atari isn't
+    // even fetching from cart space, which would mean something upstream
+    // of the cart-read datapath (or the Atari itself) never gets going.
+    assign led[2]   = ~menu_addr_activity_ctr[21];
     assign led[3]   = ~phi2_activity_ctr[21];    // blinks only if phi2_rise is actually firing
     assign led[4]   = ~heartbeat_led;
     assign led[5]   = ~blink_out;

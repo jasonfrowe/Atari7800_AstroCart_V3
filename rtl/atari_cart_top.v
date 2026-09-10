@@ -679,7 +679,13 @@ module atari_cart_top #(
 
     assign led[0]   = ~cart_pll_lock;
     assign led[1]   = ~cart_hb_led;
-    assign led[2]   = ~(|warm_reset_count);      // ON = at least one warm reset has fired since boot
+    // led[2]: femtorv_service_soc has its OWN internal PLL (producing
+    // svc_clk) with its own lock-gated reset (soc_rst_n = rst_n & pll_lock,
+    // entirely independent of core_rst_n_cart/core_rst_n_clk/warm reset
+    // above). If that lock ever flickers, it resets the whole SD-scan
+    // state machine mid-scan -- would look exactly like "stuck scanning
+    // forever, never reaches ready". ON = at least one unlock detected.
+    assign led[2]   = ~(|pll_unlock_count);
     assign led[3]   = ~phi2_activity_ctr[21];    // blinks only if phi2_rise is actually firing
     assign led[4]   = ~heartbeat_led;
     assign led[5]   = ~blink_out;

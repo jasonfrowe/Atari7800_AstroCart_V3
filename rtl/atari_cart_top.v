@@ -494,6 +494,26 @@ module atari_cart_top #(
     assign boot_rdata = (game_chunk_rsel < 5'd4) ? chunk_rdata[game_chunk_rsel] : 8'h00;
     wire [7:0] rom_data_out = (game_chunk_rsel < 5'd24) ? chunk_rdata[game_chunk_rsel] : 8'hFF;
 
+    // DIAGNOSTIC: the CPU is confirmed continuously addressing menu ROM
+    // space (menu_addr_activity_ctr), yet nothing displays -- possible
+    // either the data being served is wrong (CPU running off garbage,
+    // e.g. a corrupted reset vector, explaining continuous-but-useless
+    // E000-FFFF activity) or the data is right and something else is
+    // broken. Latch whether the FPGA EVER serves anything other than the
+    // known-correct reset vector bytes for a real CPU read of $FFFC/
+    // $FFFD -- AD/F4 (reset address $F4AD), read directly from the
+    // compiled menu/menu_chunk_03.hex. A wrong reset vector means the
+    // 6502 jumps to garbage from the very first fetch after reset.
+    reg reset_vec_mismatch = 1'b0;
+    always @(posedge clk_cart) begin
+        if (phi2_high && rw_is_read) begin
+            if ((a_sync == 16'hFFFC) && (rom_data_out != 8'hAD))
+                reset_vec_mismatch <= 1'b1;
+            if ((a_sync == 16'hFFFD) && (rom_data_out != 8'hF4))
+                reset_vec_mismatch <= 1'b1;
+        end
+    end
+
 
     // ------------------------------------------------------------------------
     // POKEY Sound Synthesizer Core Integration
@@ -691,7 +711,12 @@ module atari_cart_top #(
     end
 
     assign led[0]   = ~cart_pll_lock;
-    assign led[1]   = ~cart_hb_led;
+    // led[1]: clk_cart's own toggle heartbeat already confirmed healthy
+    // in a previous round, so this now shows something more direct: ON =
+    // the FPGA has served a WRONG byte for the 6502 reset vector at
+    // least once (see reset_vec_mismatch above). If this is on, the CPU
+    // never had a chance -- it's been running off garbage since reset.
+    assign led[1]   = ~reset_vec_mismatch;
     // led[2]: femtorv's own internal-PLL-unlock check came back clean
     // (confirmed always off in the previous hardware round), so this now
     // answers a more fundamental question instead: is the 6502 EVER

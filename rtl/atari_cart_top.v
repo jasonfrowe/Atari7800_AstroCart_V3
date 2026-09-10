@@ -84,9 +84,7 @@ module atari_cart_top #(
     // fast clock instead of bridging.
     // ------------------------------------------------------------------------
     wire clk_cart;
-    /* verilator lint_off UNUSEDSIGNAL */
     wire cart_pll_lock;
-    /* verilator lint_on UNUSEDSIGNAL */
 
     gowin_pll_cart u_pll_cart (
         .clkin  (clk),
@@ -644,7 +642,30 @@ module atari_cart_top #(
         end
     end
 
-    assign led[3:0] = 4'b1111;
+    // DIAGNOSTIC: clk_cart is entirely new/unverified on real hardware in
+    // this branch -- led[4]/led[5] only prove clk and svc_clk are alive,
+    // saying nothing about clk_cart. led[0] = cart_pll_lock directly
+    // (steady ON = locked). led[1] = an independent free-running counter
+    // clocked BY clk_cart itself, so it only blinks if clk_cart is truly
+    // toggling -- distinguishes "PLL never locks" (led[0] off) from "LOCK
+    // pin asserts but the clock isn't actually running/stable" (led[0] on,
+    // led[1] frozen or irregular) from "clk_cart is fine, the bug is
+    // downstream in clk_cart-domain logic" (both blink normally).
+    reg [23:0] cart_hb_ctr = 24'd0;
+    reg        cart_hb_led = 1'b0;
+    localparam [23:0] CART_HB_HALF = 24'd40_500_000; // ~0.5s @ ~81MHz
+    always @(posedge clk_cart) begin
+        if (cart_hb_ctr >= CART_HB_HALF) begin
+            cart_hb_ctr <= 24'd0;
+            cart_hb_led <= ~cart_hb_led;
+        end else begin
+            cart_hb_ctr <= cart_hb_ctr + 1'b1;
+        end
+    end
+
+    assign led[0]   = ~cart_pll_lock;
+    assign led[1]   = ~cart_hb_led;
+    assign led[3:2] = 2'b11;
     assign led[4]   = ~heartbeat_led;
     assign led[5]   = ~blink_out;
 

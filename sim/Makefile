@@ -16,6 +16,7 @@ V_SRC     = $(RTL_DIR)/atari_cart_top.v \
             $(RTL_DIR)/rom_block_4k.v \
             $(RTL_DIR)/ram_block_2k.v \
             $(RTL_DIR)/gowin_pll.v \
+            $(RTL_DIR)/gowin_pll_cart.v \
             $(RTL_DIR)/psram_controller.v \
             $(RTL_DIR)/femtorv_service_soc.v \
             ../third_party/femtorv/femtorv32_quark.v \

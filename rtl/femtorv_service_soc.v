@@ -118,6 +118,15 @@
     reg [7:0]  b0;
     reg [7:0]  b1;
     reg        femtorv_rst_n;
+    // boot_raddr/boot_rdata now cross into/out of the cart's own clk_cart
+    // domain (BRAM Port A moved there so MARIA/CPU cart reads can run
+    // faster, decoupled from this 54MHz service-plane clock -- see
+    // atari_cart_top.v's game_ram_raddr comment). A single wait cycle was
+    // enough when Port A ran on this same clock; it is not once the
+    // address has to cross a synchronizer into an independent domain.
+    // 3 wait cycles (~55ns @ 54MHz) comfortably covers the 2-flop sync
+    // into clk_cart plus 1 BRAM read cycle (~37ns @ 81MHz worst case).
+    reg [1:0]  dma_wait_cnt;
 
     localparam [3:0] DMA_WAIT_INIT = 4'd0;
     localparam [3:0] DMA_R0        = 4'd1;
@@ -260,6 +269,7 @@
             boot_idx        <= 13'd0;
             dma_state       <= DMA_WAIT_INIT;
             dma_calib_cnt   <= 16'd0;
+            dma_wait_cnt    <= 2'd0;
             femtorv_rst_n   <= 1'b0;
 
             psram_read      <= 1'b0;
@@ -348,22 +358,30 @@
                     end
 
                     DMA_R0: begin
-                        boot_raddr <= boot_idx;
-                        dma_state  <= DMA_R0_WAIT;
+                        boot_raddr   <= boot_idx;
+                        dma_wait_cnt <= 2'd0;
+                        dma_state    <= DMA_R0_WAIT;
                     end
 
                     DMA_R0_WAIT: begin
-                        dma_state  <= DMA_R1;
+                        if (dma_wait_cnt == 2'd2)
+                            dma_state    <= DMA_R1;
+                        else
+                            dma_wait_cnt <= dma_wait_cnt + 1'b1;
                     end
 
                     DMA_R1: begin
-                        b0         <= boot_rdata;
-                        boot_raddr <= boot_idx + 13'd1;
-                        dma_state  <= DMA_R1_WAIT;
+                        b0           <= boot_rdata;
+                        boot_raddr   <= boot_idx + 13'd1;
+                        dma_wait_cnt <= 2'd0;
+                        dma_state    <= DMA_R1_WAIT;
                     end
 
                     DMA_R1_WAIT: begin
-                        dma_state  <= DMA_R2;
+                        if (dma_wait_cnt == 2'd2)
+                            dma_state    <= DMA_R2;
+                        else
+                            dma_wait_cnt <= dma_wait_cnt + 1'b1;
                     end
 
                     DMA_R2: begin

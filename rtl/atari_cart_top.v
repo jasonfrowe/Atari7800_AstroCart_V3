@@ -70,20 +70,56 @@ module atari_cart_top #(
         end
     end
 
+    // ------------------------------------------------------------------------
+    // clk_cart: second, independent PLL (~81MHz) used for the entire cart
+    // bus-facing pipeline -- address/data bus sync (incl. glitch filter),
+    // warm-reset watchdog, mapper, POKEY, audio, mode-switch FSM, and the
+    // BRAM Port A (CPU/MARIA read) clock. Kept separate from svc_clk
+    // (FemtoRV/PSRAM, unchanged) so cart-read bandwidth can be raised
+    // without touching FemtoRV/PSRAM timing margins. See
+    // project_astrocart_v3_sd_clock_domain_plan memory for the history:
+    // main's fully-unified single-27MHz-clock design has lower total
+    // address-to-data latency than a bridged slow-bus/fast-BRAM CDC
+    // approach, so this fully unifies the bus-facing pipeline onto ONE
+    // fast clock instead of bridging.
+    // ------------------------------------------------------------------------
+    wire clk_cart;
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire cart_pll_lock;
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    gowin_pll_cart u_pll_cart (
+        .clkin  (clk),
+        .clkout (clk_cart),
+        .lock   (cart_pll_lock)
+    );
+
+    // rst_n (POR, clk domain) synchronized into clk_cart: async assert,
+    // sync deassert.
+    reg [1:0] rst_n_cart_sync = 2'b00;
+    always @(posedge clk_cart or negedge rst_n) begin
+        if (!rst_n)
+            rst_n_cart_sync <= 2'b00;
+        else
+            rst_n_cart_sync <= {rst_n_cart_sync[0], 1'b1};
+    end
+    wire rst_n_cart = rst_n_cart_sync[1];
+
     // Console warm-reset assist: if PHI2 disappears for a long window,
     // force an internal reset pulse so the cart cleanly re-initializes when PHI2 returns.
-    // Widened from 20 bits (~38.8ms @ 27MHz) to 25 bits (~1.24s): the shorter
-    // window could be spuriously tripped by a brief PHI2 hiccup right as the
-    // Atari's own oscillator stabilizes at power-on, force-resetting the
-    // whole SoC (wiping out an in-progress or just-finished SD scan/load)
-    // seconds into normal operation -- long after cart RAM already has stale
-    // menu titles displayed from the scan that ran before that reset fired.
-    reg [24:0] phi2_idle_ctr = 25'd0;
+    // Runs on clk_cart now (same domain as phi2_rise below). Widened from
+    // 25 bits (~1.24s @ 27MHz) to 27 bits to preserve that same real-time
+    // margin at clk_cart's ~3x rate (81/27=3): the shorter window could be
+    // spuriously tripped by a brief PHI2 hiccup right as the Atari's own
+    // oscillator stabilizes at power-on, force-resetting the whole SoC
+    // (wiping out an in-progress or just-finished SD scan/load) seconds
+    // into normal operation.
+    reg [26:0] phi2_idle_ctr = 27'd0;
     reg [11:0] warm_rst_ctr  = 12'd0;
     reg        warm_rst_n    = 1'b0;
 
     // ------------------------------------------------------------------------
-    // Noise-Filtered Synchronizers for Atari 7800 Signals (27MHz System Clock)
+    // Noise-Filtered Synchronizers for Atari 7800 Signals (clk_cart, ~81MHz)
     // ------------------------------------------------------------------------
     reg [1:0] phi2_pipe;
     reg [2:0] rw_pipe;
@@ -92,7 +128,7 @@ module atari_cart_top #(
     reg [7:0] d_in_sync;
     reg       phi2_clean;
 
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         phi2_pipe <= {phi2_pipe[0], phi2};
         rw_pipe   <= {rw_pipe[1:0], rw};
         a_pipe    <= a;
@@ -106,22 +142,22 @@ module atari_cart_top #(
     end
 
     reg phi2_clean_prev;
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         phi2_clean_prev <= phi2_clean;
     end
 
     wire phi2_high  = phi2_clean;
     wire phi2_rise  = (phi2_clean && !phi2_clean_prev);
     wire rw_is_read = rw_pipe[1];
-    wire core_rst_n = rst_n && warm_rst_n;
+    wire core_rst_n_cart = rst_n_cart && warm_rst_n;
 
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         if (phi2_rise)
-            phi2_idle_ctr <= 25'd0;
-        else if (phi2_idle_ctr != 25'h1FFFFFF)
+            phi2_idle_ctr <= 27'd0;
+        else if (phi2_idle_ctr != 27'h7FFFFFF)
             phi2_idle_ctr <= phi2_idle_ctr + 1'b1;
 
-        if (phi2_idle_ctr == 25'h1FFFFFF) begin
+        if (phi2_idle_ctr == 27'h7FFFFFF) begin
             warm_rst_n   <= 1'b0;
             warm_rst_ctr <= 12'd0;
         end else if (!warm_rst_n) begin
@@ -138,11 +174,23 @@ module atari_cart_top #(
     // "core reset once at boot" apart from "core keeps getting reset".
     reg [3:0] warm_reset_count = 4'd0;
     reg       warm_rst_n_prev  = 1'b1;
-    always @(posedge clk) begin
+    always @(posedge clk_cart) begin
         warm_rst_n_prev <= warm_rst_n;
         if (warm_rst_n_prev && !warm_rst_n && (warm_reset_count != 4'hF))
             warm_reset_count <= warm_reset_count + 1'b1;
     end
+
+    // core_rst_n_cart (clk_cart domain) synchronized back into clk domain
+    // for femtorv_service_soc, which stays on clk/svc_clk: async assert,
+    // sync deassert.
+    reg [1:0] core_rst_n_clk_sync = 2'b00;
+    always @(posedge clk or negedge core_rst_n_cart) begin
+        if (!core_rst_n_cart)
+            core_rst_n_clk_sync <= 2'b00;
+        else
+            core_rst_n_clk_sync <= {core_rst_n_clk_sync[0], 1'b1};
+    end
+    wire core_rst_n_clk = core_rst_n_clk_sync[1];
 
     // ------------------------------------------------------------------------
     // Menu-first dual-image mode & Handover
@@ -201,7 +249,7 @@ module atari_cart_top #(
                 .FIRMWARE_HEX(FW_INIT_FILE)
             ) u_service (
                 .clk           (clk),
-                .rst_n         (core_rst_n),
+                .rst_n         (core_rst_n_clk),
                 .trigger_val   (trigger_val_sideband),
                 .status_val    (svc_status_val),
                 .debug0        (),
@@ -290,8 +338,8 @@ module atari_cart_top #(
     reg  [1:0] pokey_cfg_addr_sel;
     reg  [3:0] mapper_cfg_type;
 
-    always @(posedge clk or negedge core_rst_n) begin
-        if (!core_rst_n) begin
+    always @(posedge clk_cart or negedge core_rst_n_cart) begin
+        if (!core_rst_n_cart) begin
             pokey_cfg_enable   <= 1'b1;
             pokey_cfg_addr_sel <= 2'b01; // default $0450
             mapper_cfg_type    <= 4'h0;  // default linear
@@ -327,8 +375,8 @@ module atari_cart_top #(
     wire [18:0] phys_rom_addr;
 
     mapper_supergame u_mapper (
-        .clk            (clk),
-        .rst_n          (core_rst_n),
+        .clk            (clk_cart),
+        .rst_n          (core_rst_n_cart),
         .phi2_high      (phi2_high),
         .phi2_rise      (phi2_rise),
         .cs             (is_cart_addr),
@@ -342,7 +390,24 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Cartridge Game RAM (48KB across 24 BSRAM blocks)
     // ------------------------------------------------------------------------
-    wire [15:0] game_ram_raddr = boot_busy ? {3'b000, boot_raddr} : phys_rom_addr[15:0];
+    // boot_raddr/boot_busy come from femtorv_service_soc, which stays on
+    // its own clk/svc_clk domain (unchanged). Now that BRAM Port A (below)
+    // runs on clk_cart, that's a real clock-domain crossing. Synchronize
+    // both into clk_cart, and derive game_chunk_rsel/roff from the SAME
+    // synchronized boot_busy_sync/boot_raddr_sync value used for
+    // game_ram_raddr -- mixing a synced selector with an unsynced address
+    // (or vice versa) caused a selector/data mismatch that crashed every
+    // game load on real hardware in an earlier attempt at this.
+    reg [12:0] boot_raddr_sync0, boot_raddr_sync1;
+    reg        boot_busy_sync0, boot_busy_sync1;
+    always @(posedge clk_cart) begin
+        boot_raddr_sync0 <= boot_raddr;
+        boot_raddr_sync1 <= boot_raddr_sync0;
+        boot_busy_sync0  <= boot_busy;
+        boot_busy_sync1  <= boot_busy_sync0;
+    end
+
+    wire [15:0] game_ram_raddr = boot_busy_sync1 ? {3'b000, boot_raddr_sync1} : phys_rom_addr[15:0];
     wire [4:0]  game_chunk_rsel = game_ram_raddr[15:11];
     wire [10:0] game_chunk_roff = game_ram_raddr[10:0];
 
@@ -356,19 +421,19 @@ module atari_cart_top #(
 
     // Blocks 0..3: Initialized with FemtoRV firmware image for power-on bootloader copy to PSRAM
     ram_block_2k #(.INIT_FILE("femtorv_chunk_00.hex")) u_game_ram_00 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[0]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[0]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd0)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_01.hex")) u_game_ram_01 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[1]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[1]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd1)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_02.hex")) u_game_ram_02 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[2]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[2]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd2)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("femtorv_chunk_03.hex")) u_game_ram_03 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[3]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[3]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd3)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
 
@@ -377,7 +442,7 @@ module atari_cart_top #(
     generate
         for (gi = 4; gi < 20; gi = gi + 1) begin : gen_game_ram
             ram_block_2k #(.INIT_FILE("")) u_game_ram (
-                .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[gi]),
+                .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[gi]),
                 .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == gi[4:0])), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
             );
         end
@@ -385,19 +450,19 @@ module atari_cart_top #(
 
     // Blocks 20..23: Initialized with 8KB Menu ROM ($E000-$FFFF)
     ram_block_2k #(.INIT_FILE("menu_chunk_00.hex")) u_game_ram_20 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[20]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[20]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd20)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_01.hex")) u_game_ram_21 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[21]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[21]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd21)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_02.hex")) u_game_ram_22 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[22]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[22]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd22)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
     ram_block_2k #(.INIT_FILE("menu_chunk_03.hex")) u_game_ram_23 (
-        .clka(svc_clk), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[23]),
+        .clka(clk_cart), .a_addr(game_chunk_roff), .a_rdata(chunk_rdata[23]),
         .clkb(svc_clk), .b_we(loader_cart_ram_we && (loader_chunk_wsel == 5'd23)), .b_addr(loader_chunk_woff), .b_wdata(loader_cart_ram_wdata)
     );
 
@@ -412,8 +477,8 @@ module atari_cart_top #(
     wire [7:0] pcm_audio;
 
     pokey_synth u_pokey (
-        .clk        (clk),
-        .rst_n      (core_rst_n),
+        .clk        (clk_cart),
+        .rst_n      (core_rst_n_cart),
         .phi2_rise  (phi2_rise),
         .cs         (pokey_enable && is_pokey_addr),
         .rw         (rw_is_read),
@@ -425,8 +490,8 @@ module atari_cart_top #(
 
     // Audio PWM Modulator on Pin 76 (T_EAUD)
     audio_pwm u_pwm (
-        .clk        (clk),
-        .rst_n      (core_rst_n),
+        .clk        (clk_cart),
+        .rst_n      (core_rst_n_cart),
         .level      (pcm_audio),
         .pwm_out    (audio)
     );
@@ -453,8 +518,8 @@ module atari_cart_top #(
     // ------------------------------------------------------------------------
     // Handover & Mode Switch State Machine
     // ------------------------------------------------------------------------
-    always @(posedge clk or negedge core_rst_n) begin
-        if (!core_rst_n) begin
+    always @(posedge clk_cart or negedge core_rst_n_cart) begin
+        if (!core_rst_n_cart) begin
             game_mode            <= 1'b0;
             switch_pending       <= 1'b0;
             switch_delay         <= 16'd0;

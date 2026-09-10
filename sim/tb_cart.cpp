@@ -795,7 +795,7 @@ int main(int argc, char** argv) {
     std::cout << "[TEST 0.1] Testing Stage 2 SD Sector Probe (LBA 2048)..." << std::endl;
     watchdog_kick_div = 0;
     int core_reset_falls = 0;
-    int prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
+    int prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n_cart;
     for (int timeout = 0; timeout < 20000000 && !sd_card_sim.saw_cmd17_lba2048; timeout++) {
         watchdog_kick_div++;
         if (watchdog_kick_div >= 2000) {
@@ -805,10 +805,10 @@ int main(int argc, char** argv) {
             top->phi2 = 0;
         }
         tick();
-        if (prev_core_rst_n == 1 && top->rootp->atari_cart_top__DOT__core_rst_n == 0) {
+        if (prev_core_rst_n == 1 && top->rootp->atari_cart_top__DOT__core_rst_n_cart == 0) {
             core_reset_falls++;
         }
-        prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n;
+        prev_core_rst_n = top->rootp->atari_cart_top__DOT__core_rst_n_cart;
     }
     std::cout << " -> CMD17 LBA0=" << (sd_card_sim.saw_cmd17_lba0 ? "yes" : "no")
               << " CMD17 LBA2048=" << (sd_card_sim.saw_cmd17_lba2048 ? "yes" : "no")
